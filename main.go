@@ -405,8 +405,9 @@ func (app *App) handleMessage(ctx context.Context, chatID, openID, content strin
 		log.Printf("Failed to send message to ACP: %v", err)
 		return err
 	}
+	info.Mu.Lock()
+	defer info.Mu.Unlock()
 	agent.ResetStreaming(info)
-
 	return nil
 }
 

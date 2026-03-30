@@ -341,16 +341,16 @@ func ToolCallCard(info *session.ToolCallIdInfo) string {
 	}
 
 	// 显示内容（如果有 diff 或文本）
-	if len(info.Content) > 0 {
-		contentBuilder.WriteString("**内容:**\n")
-		for _, c := range info.Content {
-			if c.Diff != nil {
-				contentBuilder.WriteString(fmt.Sprintf("```diff\n%s\n```\n", c.Diff.NewText))
-			} else if c.Content != nil && c.Content.Content.Text != nil {
-				contentBuilder.WriteString(fmt.Sprintf("%s\n", c.Content.Content.Text.Text))
-			}
-		}
-	}
+	// if len(info.Content) > 0 {
+	// 	contentBuilder.WriteString("**内容:**\n")
+	// 	for _, c := range info.Content {
+	// 		if c.Diff != nil {
+	// 			contentBuilder.WriteString(fmt.Sprintf("```diff\n%s\n```\n", c.Diff.NewText))
+	// 		} else if c.Content != nil && c.Content.Content.Text != nil {
+	// 			contentBuilder.WriteString(fmt.Sprintf("%s\n", c.Content.Content.Text.Text))
+	// 		}
+	// 	}
+	// }
 
 	card := map[string]any{
 		"schema": "2.0",
