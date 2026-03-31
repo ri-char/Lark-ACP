@@ -164,9 +164,9 @@ func (app *App) handleBotMenu(ctx context.Context, event *larkapplication.P2BotM
 
 	switch eventKey {
 	case "new_session":
-		return app.handleNewSession(ctx, openID)
+		go app.handleNewSession(ctx, openID)
 	case "load_session":
-		return app.handleLoadSession(ctx, openID)
+		go app.handleLoadSession(ctx, openID)
 	}
 
 	return nil
@@ -420,7 +420,9 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 	}
 
 	if actionType == "change_model" {
-		sessionInfo, ok := app.store.Get(event.Event.Context.OpenChatID)
+		chatId := event.Event.Context.OpenChatID
+
+		sessionInfo, ok := app.store.Get(chatId)
 		if !ok {
 			return &callback.CardActionTriggerResponse{
 				Toast: &callback.Toast{
@@ -429,40 +431,9 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 				},
 			}, nil
 		}
-		agent, ok := app.getOrRecoveryAgentBySessionInfo(ctx, sessionInfo)
-		if !ok {
-			return &callback.CardActionTriggerResponse{
-				Toast: &callback.Toast{
-					Type:    "error",
-					Content: "会话已过期或无法恢复",
-				},
-			}, nil
-		}
-		err := agent.SetModel(ctx, sessionInfo.ACPSessionID, action.Option)
-		if err != nil {
-			log.Printf("Failed to set model: %v", err)
-			return &callback.CardActionTriggerResponse{
-				Toast: &callback.Toast{
-					Type:    "error",
-					Content: fmt.Sprintf("切换模型失败: %v", err),
-				},
-			}, nil
-		}
-		sessionInfo.LastModelId = action.Option
-		if sessionInfo.Models != nil {
-			sessionInfo.Models.CurrentModelId = acpsdk.ModelId(action.Option)
-		}
-		app.store.Save()
-		go app.feishu.SendOrUpdatePinCard(ctx, sessionInfo)
-		return &callback.CardActionTriggerResponse{
-			Toast: &callback.Toast{
-				Type:    "success",
-				Content: "已切换模型",
-			},
-		}, nil
-
+		go app.handleChangeModel(ctx, sessionInfo, action.Option)
+		return &callback.CardActionTriggerResponse{}, nil
 	}
-
 	if actionType == "change_mode" {
 		sessionInfo, ok := app.store.Get(event.Event.Context.OpenChatID)
 		if !ok {
@@ -473,44 +444,15 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 				},
 			}, nil
 		}
-		agent, ok := app.getOrRecoveryAgentBySessionInfo(ctx, sessionInfo)
-		if !ok {
-			return &callback.CardActionTriggerResponse{
-				Toast: &callback.Toast{
-					Type:    "error",
-					Content: "会话已过期或无法恢复",
-				},
-			}, nil
-		}
-		err := agent.SetMode(ctx, sessionInfo.ACPSessionID, action.Option)
-		if err != nil {
-			log.Printf("Failed to set mode: %v", err)
-			return &callback.CardActionTriggerResponse{
-				Toast: &callback.Toast{
-					Type:    "error",
-					Content: fmt.Sprintf("切换状态失败: %v", err),
-				},
-			}, nil
-		}
-		sessionInfo.LastModeId = action.Option
-		if sessionInfo.Modes != nil {
-			sessionInfo.Modes.CurrentModeId = acpsdk.SessionModeId(action.Option)
-		}
-		app.store.Save()
-		go app.feishu.SendOrUpdatePinCard(ctx, sessionInfo)
-		return &callback.CardActionTriggerResponse{
-			Toast: &callback.Toast{
-				Type:    "success",
-				Content: "已切换状态",
-			},
-		}, nil
+		go app.handleChangeMode(ctx, sessionInfo, action.Option)
+		return &callback.CardActionTriggerResponse{}, nil
 
 	}
 	return nil, nil
 }
 
 // handleNewSession initiates the session creation flow
-func (app *App) handleNewSession(ctx context.Context, openID string) error {
+func (app *App) handleNewSession(ctx context.Context, openID string) {
 	log.Printf("New session request from: %s", openID)
 
 	agentNames := make([]string, 0, len(app.cfg.Agents))
@@ -519,19 +461,20 @@ func (app *App) handleNewSession(ctx context.Context, openID string) error {
 	}
 
 	if len(agentNames) == 0 {
-		return fmt.Errorf("no agents configured")
+		log.Printf("no agents configured")
+		return
 	}
 
 	cardContent := feishu.AgentSelectionCard(agentNames)
 	if err := app.feishu.SendInteractiveCardToUser(ctx, openID, cardContent); err != nil {
-		return fmt.Errorf("failed to send agent selection card: %w", err)
+		log.Printf("failed to send agent selection card: %v", err)
+		return
 	}
 
 	log.Printf("Agent selection card sent to: %s", openID)
-	return nil
 }
 
-func (app *App) handleLoadSession(ctx context.Context, openID string) error {
+func (app *App) handleLoadSession(ctx context.Context, openID string) {
 	log.Printf("Load session request from: %s", openID)
 	agentNames := make([]string, 0, len(app.cfg.Agents))
 	for _, agents := range app.cfg.Agents {
@@ -539,10 +482,10 @@ func (app *App) handleLoadSession(ctx context.Context, openID string) error {
 	}
 	cardContent := feishu.LoadSessionAgentSelectionCard(agentNames)
 	if err := app.feishu.SendInteractiveCardToUser(ctx, openID, cardContent); err != nil {
-		return fmt.Errorf("failed to send agent selection card: %w", err)
+		log.Printf("failed to send agent selection card: %v", err)
+		return
 	}
 	log.Printf("Load session agent selection card sent to: %s", openID)
-	return nil
 }
 
 func (app *App) handleLoadSessionStage1(ctx context.Context, openID, msgId, agentName string) {
@@ -691,6 +634,46 @@ func (app *App) handleLoadSessionStage2(ctx context.Context, openID, msgId, agen
 	app.feishu.SendOrUpdatePinCard(ctx, &sessionInfo)
 	app.store.Save()
 
+}
+
+func (app *App) handleChangeModel(ctx context.Context, sessionInfo *session.SessionInfo, modelId string) {
+	agent, ok := app.getOrRecoveryAgentBySessionInfo(ctx, sessionInfo)
+	if !ok {
+		app.feishu.SendMessage(ctx, sessionInfo.FeishuChatID, "会话已过期或无法恢复")
+		return
+	}
+	err := agent.SetModel(ctx, sessionInfo.ACPSessionID, modelId)
+	if err != nil {
+		log.Printf("Failed to set model: %v", err)
+		app.feishu.SendMessage(ctx, sessionInfo.FeishuChatID, fmt.Sprintf("切换模型失败: %v", err))
+		return
+	}
+	sessionInfo.LastModelId = modelId
+	if sessionInfo.Models != nil {
+		sessionInfo.Models.CurrentModelId = acpsdk.ModelId(modelId)
+	}
+	app.store.Save()
+	app.feishu.SendOrUpdatePinCard(ctx, sessionInfo)
+}
+
+func (app *App) handleChangeMode(ctx context.Context, sessionInfo *session.SessionInfo, modeId string) {
+	agent, ok := app.getOrRecoveryAgentBySessionInfo(ctx, sessionInfo)
+	if !ok {
+		app.feishu.SendMessage(ctx, sessionInfo.FeishuChatID, "会话已过期或无法恢复")
+		return
+	}
+	err := agent.SetMode(ctx, sessionInfo.ACPSessionID, modeId)
+	if err != nil {
+		log.Printf("Failed to set mode: %v", err)
+		app.feishu.SendMessage(ctx, sessionInfo.FeishuChatID, fmt.Sprintf("切换状态失败: %v", err))
+		return
+	}
+	sessionInfo.LastModeId = modeId
+	if sessionInfo.Modes != nil {
+		sessionInfo.Modes.CurrentModeId = acpsdk.SessionModeId(modeId)
+	}
+	app.store.Save()
+	app.feishu.SendOrUpdatePinCard(ctx, sessionInfo)
 }
 
 // createSession creates an ACP session and Feishu group

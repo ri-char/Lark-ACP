@@ -15,7 +15,6 @@ type AgentConfig struct {
 type Config struct {
 	FeishuAppID     string        `toml:"feishu_app_id"`
 	FeishuAppSecret string        `toml:"feishu_app_secret"`
-	DefaultAgent    string        `toml:"default_agent"`
 	Agents          []AgentConfig `toml:"agent"`
 }
 

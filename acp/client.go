@@ -385,7 +385,7 @@ func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification
 			log.Printf("Failed to send plan card to Feishu: %v", err)
 		}
 		if sessionInfo.PlanMsgId == nil && msgIdPtr != nil {
-			c.feishu.PutTopNotice(ctx, sessionInfo.FeishuChatID, *msgIdPtr)
+			c.feishu.PinMessage(ctx, *msgIdPtr)
 		}
 		if msgIdPtr != nil {
 			sessionInfo.PlanMsgId = msgIdPtr
