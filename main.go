@@ -65,7 +65,8 @@ func main() {
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		OnP2BotMenuV6(app.handleBotMenu).
 		OnP2MessageReceiveV1(app.handleMessageReceive).
-		OnP2CardActionTrigger(app.handleCardActionTrigger)
+		OnP2CardActionTrigger(app.handleCardActionTrigger).
+		OnP2ChatDisbandedV1(app.handleChatDisband)
 
 	// Create WebSocket client for long connection
 	cli := larkws.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret,
@@ -98,6 +99,50 @@ func main() {
 	for _, agent := range app.agents {
 		agent.Close()
 	}
+}
+
+func (app *App) handleChatDisband(ctx context.Context, event *larkim.P2ChatDisbandedV1) error {
+	chatIdPtr := event.Event.ChatId
+	if chatIdPtr == nil {
+		log.Printf("Chat disbanded event missing chat ID")
+		return nil
+	}
+	chatId := *chatIdPtr
+	log.Printf("Chat disbanded: %s", chatId)
+
+	// 查找对应的 session信息
+	sessionInfo, ok := app.store.Get(chatId)
+	if !ok {
+		log.Printf("No session info found for chat: %s", chatId)
+		return nil
+	}
+	// 关闭对应的 ACP agent
+	agent, ok := app.agents[chatId]
+	if ok {
+		delete(app.agents, chatId)
+		agentInUse := false
+		for _, a := range app.agents {
+			if a == agent {
+				agentInUse = true
+				break
+			}
+		}
+		if agentInUse {
+			log.Printf("Agent for session %s is still in use by another chat, not closing", sessionInfo.ACPSessionID)
+		} else {
+			log.Printf("Closing agent for session %s", sessionInfo.ACPSessionID)
+			agent.Close()
+		}
+	}
+	// 删除 session信息
+	delete(app.sessionToChat, sessionInfo.ACPSessionID)
+	if err := app.store.Delete(chatId); err != nil {
+		log.Printf("Failed to delete session info for chat: %s, error: %v", chatId, err)
+	} else {
+		log.Printf("Deleted session info for chat: %s", chatId)
+		app.store.Save()
+	}
+	return nil
 }
 
 // handleBotMenu handles bot menu events (new_session)
@@ -242,8 +287,12 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 	}
 
 	// 处理权限选择
-	
-	if actionType, ok := action.Value["action"]; ok && actionType == "permission" {
+	actionType, ok := action.Value["action"]
+	if !ok {
+		return nil, nil
+	}
+
+	if actionType == "permission" {
 		value := action.Value
 		requestID, _ := value["request_id"].(string)
 		optionID, _ := value["option_id"].(string)
@@ -285,13 +334,100 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 				Type:    "success",
 				Content: "已处理权限请求",
 			},
-				Card: &callback.Card{
-					Type: "raw",
-					Data: feishu.PermissionFreezeCard(pending.Options, pending.ToolCall, false, optionID),
-				},
+			Card: &callback.Card{
+				Type: "raw",
+				Data: feishu.PermissionFreezeCard(pending.Options, pending.ToolCall, false, optionID),
+			},
 		}, nil
 	}
 
+	if actionType == "change_model" {
+		sessionInfo, ok := app.store.Get(event.Event.Context.OpenChatID)
+		if !ok {
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: "会话不存在",
+				},
+			}, nil
+		}
+		agent, ok := app.getOrRecoveryAgentBySessionInfo(ctx, sessionInfo)
+		if !ok {
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: "会话已过期或无法恢复",
+				},
+			}, nil
+		}
+		err := agent.SetModel(ctx, sessionInfo.ACPSessionID, action.Option)
+		if err != nil {
+			log.Printf("Failed to set model: %v", err)
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: fmt.Sprintf("切换模型失败: %v", err),
+				},
+			}, nil
+		}
+		sessionInfo.LastModelId = action.Option
+		if sessionInfo.Models != nil {
+			sessionInfo.Models.CurrentModelId = acpsdk.ModelId(action.Option)
+		}
+		app.store.Save()
+		go app.sendOrUpdatePinCard(ctx, sessionInfo)
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{
+				Type:    "success",
+				Content: "已切换模型",
+			},
+		}, nil
+
+	}
+
+	if actionType == "change_mode" {
+		sessionInfo, ok := app.store.Get(event.Event.Context.OpenChatID)
+		if !ok {
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: "会话不存在",
+				},
+			}, nil
+		}
+		agent, ok := app.getOrRecoveryAgentBySessionInfo(ctx, sessionInfo)
+		if !ok {
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: "会话已过期或无法恢复",
+				},
+			}, nil
+		}
+		err := agent.SetMode(ctx, sessionInfo.ACPSessionID, action.Option)
+		if err != nil {
+			log.Printf("Failed to set mode: %v", err)
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: fmt.Sprintf("切换状态失败: %v", err),
+				},
+			}, nil
+		}
+		sessionInfo.LastModeId = action.Option
+		if sessionInfo.Modes != nil {
+			sessionInfo.Modes.CurrentModeId = acpsdk.SessionModeId(action.Option)
+		}
+		app.store.Save()
+		go app.sendOrUpdatePinCard(ctx, sessionInfo)
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{
+				Type:    "success",
+				Content: "已切换状态",
+			},
+		}, nil
+
+	}
 	return nil, nil
 }
 
@@ -342,7 +478,7 @@ func (app *App) createSession(openID, agentName, path string) {
 		return
 	}
 
-	sessionID, err := agent.CreateSession(ctx, path)
+	sessionID, models, modes, err := agent.CreateSession(ctx, path)
 	if err != nil {
 		agent.Close()
 		log.Printf("Failed to create ACP session: %v", err)
@@ -366,6 +502,8 @@ func (app *App) createSession(openID, agentName, path string) {
 		AgentName:        agentName,
 		Path:             path,
 		ToolCallIdToInfo: make(map[string]*session.ToolCallIdInfo),
+		Models:           models,
+		Modes:            modes,
 	}
 	if err := app.store.Set(groupChatID, &sessionInfo); err != nil {
 		log.Printf("Warning: failed to save session: %v", err)
@@ -373,12 +511,8 @@ func (app *App) createSession(openID, agentName, path string) {
 	agent.SetSessionChatID(&sessionInfo)
 	link, err := app.feishu.GetGroupShareLink(ctx, groupChatID)
 	app.feishu.SendInteractiveCardToUser(ctx, openID, feishu.NewSessionFinishCard(agentName, path, link))
-	welcomeMsg := fmt.Sprintf("会话创建成功\nAgent: %s\nPath: %s", agentName, path)
-	if err := app.feishu.SendMessage(ctx, groupChatID, welcomeMsg); err != nil {
-		log.Printf("Warning: failed to send welcome message: %v", err)
-	}
-
-	log.Printf("Session created: openID=%s, agent=%s, path=%s, groupChat=%s, acpSession=%s", openID, agentName, path, groupChatID, sessionID)
+	app.sendOrUpdatePinCard(ctx, &sessionInfo)
+	app.store.Save()
 }
 
 // handleMessage handles messages from Feishu groups
@@ -390,15 +524,11 @@ func (app *App) handleMessage(ctx context.Context, chatID, openID, content strin
 		log.Printf("No session found for chat: %s", chatID)
 		return nil
 	}
-
-	agent, ok := app.agents[chatID]
+	agent, ok := app.getOrRecoveryAgentBySessionInfo(ctx, info)
 	if !ok {
-		log.Printf("No ACP client found for chat: %s, attempting to restore...", chatID)
-		agent, ok = app.restoreAgent(ctx, info)
-		if !ok {
-			app.feishu.SendMessage(ctx, chatID, "会话已过期或无法恢复")
-			return nil
-		}
+		log.Printf("No agent found for chat: %s", chatID)
+		app.feishu.SendMessage(ctx, chatID, "会话已过期或无法恢复")
+		return nil
 	}
 
 	if err := agent.SendMessage(ctx, info.ACPSessionID, content); err != nil {
@@ -409,6 +539,18 @@ func (app *App) handleMessage(ctx context.Context, chatID, openID, content strin
 	defer info.Mu.Unlock()
 	agent.ResetStreaming(info)
 	return nil
+}
+
+func (app *App) getOrRecoveryAgentBySessionInfo(ctx context.Context, info *session.SessionInfo) (*acp.Client, bool) {
+	agent, ok := app.agents[info.FeishuChatID]
+	if !ok {
+		log.Printf("No ACP client found for chat: %s, attempting to restore...", info.FeishuChatID)
+		agent, ok = app.restoreAgent(ctx, info)
+		if !ok {
+			return nil, false
+		}
+	}
+	return agent, ok
 }
 
 // restoreAgent restores an ACP client connection for a chat
@@ -430,15 +572,68 @@ func (app *App) restoreAgent(ctx context.Context, info *session.SessionInfo) (*a
 		log.Printf("Failed to initialize ACP: %v", err)
 		return nil, false
 	}
-
-	if err := newAgent.LoadSession(ctx, info.ACPSessionID, info.Path); err != nil {
+	models, modes, err := newAgent.LoadSession(ctx, info.ACPSessionID, info.Path)
+	if err != nil {
 		newAgent.Close()
 		log.Printf("Failed to load session: %v", err)
 		return nil, false
 	}
+	if len(info.LastModelId) > 0 {
+		err = newAgent.SetModel(ctx, info.ACPSessionID, info.LastModelId)
+		if err != nil {
+			log.Printf("Failed to set model: %v", err)
+			if models != nil {
+				info.LastModelId = string(models.CurrentModelId)
+			}
+		} else {
+			if models != nil {
+				models.CurrentModelId = acpsdk.ModelId(info.LastModelId)
+			}
+		}
+	}
+	if len(info.LastModeId) > 0 {
+		err = newAgent.SetMode(ctx, info.ACPSessionID, info.LastModeId)
+		if err != nil {
+			log.Printf("Failed to set mode: %v", err)
+			if modes != nil {
+				info.LastModeId = string(modes.CurrentModeId)
+			}
+		} else {
+			if modes != nil {
+				modes.CurrentModeId = acpsdk.SessionModeId(info.LastModeId)
+			}
+		}
+	}
+	info.Models = models
+	info.Modes = modes
 
 	newAgent.SetSessionChatID(info)
 	app.agents[info.FeishuChatID] = newAgent
+	app.sendOrUpdatePinCard(ctx, info)
+	app.store.Save()
 	log.Printf("Agent connection restored for chat: %s", info.FeishuChatID)
 	return newAgent, true
+}
+
+func (app *App) sendOrUpdatePinCard(ctx context.Context, sessionInfo *session.SessionInfo) {
+	cardContent := feishu.GroupPinHeaderCard(sessionInfo.AgentName, sessionInfo.Path, sessionInfo.Models, sessionInfo.Modes)
+	if sessionInfo.PinCardMsgId != nil {
+		if err := app.feishu.UpdateInteractiveCard(ctx, cardContent, *sessionInfo.PinCardMsgId); err != nil {
+			log.Printf("Failed to update pin card: %v", err)
+		}
+	} else {
+		msgID, err := app.feishu.SendInteractiveCard(ctx, sessionInfo.FeishuChatID, cardContent)
+		if err != nil {
+			log.Printf("Failed to send pin card: %v", err)
+			return
+		}
+		sessionInfo.PinCardMsgId = msgID
+		if msgID != nil {
+			err := app.feishu.PinMessage(ctx, *msgID)
+			if err != nil {
+				log.Printf("Failed to pin message: %v", err)
+			}
+		}
+
+	}
 }

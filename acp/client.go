@@ -41,9 +41,6 @@ func New(cmdStr string, feishu *feishu.Client, permissionMgr *session.Permission
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
-	// Merge stderr to stdout for debugging
-	cmd.Stderr = cmd.Stdout
-
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start command: %w", err)
 	}
@@ -57,7 +54,8 @@ func New(cmdStr string, feishu *feishu.Client, permissionMgr *session.Permission
 	}
 
 	// Create client-side connection with our handler
-	c.conn = acpsdk.NewClientSideConnection(c, stdin, stdout)
+	wrappedStdout := NewJSONRPCReader(stdout)
+	c.conn = acpsdk.NewClientSideConnection(c, stdin, wrappedStdout)
 
 	return c, nil
 }
@@ -79,28 +77,50 @@ func (c *Client) Initialize(ctx context.Context) error {
 
 // CreateSession creates a new ACP session with the given working directory
 // cwd must be an absolute path
-func (c *Client) CreateSession(ctx context.Context, cwd string) (string, error) {
+func (c *Client) CreateSession(ctx context.Context, cwd string) (string, *acpsdk.SessionModelState, *acpsdk.SessionModeState, error) {
 	resp, err := c.conn.NewSession(ctx, acpsdk.NewSessionRequest{
 		Cwd:        cwd,
 		McpServers: []acpsdk.McpServer{},
 	})
 	if err != nil {
-		return "", err
+		return "",nil, nil, err
 	}
-	return string(resp.SessionId), nil
+	return string(resp.SessionId), resp.Models, resp.Modes, nil
 }
 
 // LoadSession loads an existing ACP session
 // cwd must be an absolute path
-func (c *Client) LoadSession(ctx context.Context, sessionID, cwd string) error {
-	_, err := c.conn.LoadSession(ctx, acpsdk.LoadSessionRequest{
+func (c *Client) LoadSession(ctx context.Context, sessionID, cwd string) (*acpsdk.SessionModelState, *acpsdk.SessionModeState, error) {
+	resp, err := c.conn.LoadSession(ctx, acpsdk.LoadSessionRequest{
 		SessionId:  acpsdk.SessionId(sessionID),
 		Cwd:        cwd,
 		McpServers: []acpsdk.McpServer{},
 	})
-	return err
+
+	return resp.Models, resp.Modes, err
 }
 
+func (c *Client) SetModel(ctx context.Context, sessionID, modelId string) error {
+	_, err := c.conn.SetSessionModel(ctx, acpsdk.SetSessionModelRequest{
+		SessionId: acpsdk.SessionId(sessionID),
+		ModelId:   acpsdk.ModelId(modelId),
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Client) SetMode(ctx context.Context, sessionID, modeId string) error {
+	_, err := c.conn.SetSessionMode(ctx, acpsdk.SetSessionModeRequest{
+		SessionId: acpsdk.SessionId(sessionID),
+		ModeId:   acpsdk.SessionModeId(modeId),
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
 // SendMessage sends a prompt to the ACP session
 func (c *Client) SendMessage(ctx context.Context, sessionID, content string) error {
 	_, err := c.conn.Prompt(ctx, acpsdk.PromptRequest{

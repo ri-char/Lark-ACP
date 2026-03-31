@@ -274,3 +274,20 @@ func (c *Client) SendInteractiveCardById(ctx context.Context, chatID, cardId str
 func (c *Client) GetClient() *lark.Client {
 	return c.client
 }
+
+func (c *Client) PinMessage(ctx context.Context, msgId string) error {
+	req := larkim.NewCreatePinReqBuilder().
+		Body(larkim.NewCreatePinReqBodyBuilder().
+			MessageId(msgId).
+			Build()).
+		Build()
+	resp, err := c.client.Im.Pin.Create(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to pin message: %w", err)
+	}
+
+	if !resp.Success() {
+		return fmt.Errorf("failed to pin message: code=%d, msg=%s", resp.Code, resp.Msg)
+	}
+	return nil
+}

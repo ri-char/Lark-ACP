@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -23,6 +24,10 @@ func AgentSelectionCard(agents []string) string {
 			},
 			"value": agent,
 		}
+	}
+	defaultPath, err := os.Getwd()
+	if err != nil {
+		defaultPath = "/home/user"
 	}
 
 	// JSON 2.0 卡片结构
@@ -103,9 +108,9 @@ func AgentSelectionCard(agents []string) string {
 											"required": true,
 											"placeholder": map[string]any{
 												"tag":     "plain_text",
-												"content": "/home/user/project",
+												"content": "Agent运行的绝对路径",
 											},
-											"default_value": "/home/user/project",
+											"default_value": defaultPath,
 											"width":         "fill",
 										},
 									},
@@ -693,8 +698,8 @@ func StreamingCard(ty string, text string) string {
 		"body": map[string]any{
 			"elements": []map[string]any{
 				{
-					"tag": "markdown",
-					"content": text,
+					"tag":        "markdown",
+					"content":    text,
 					"element_id": "markdown_main",
 				},
 			},
@@ -716,6 +721,256 @@ func StreamingCardEndSetting() string {
 	card := map[string]any{
 		"config": map[string]any{
 			"streaming_mode": false,
+		},
+	}
+	data, _ := json.Marshal(card)
+	return string(data)
+}
+
+func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, modes *acpsdk.SessionModeState) string {
+
+	elements := []map[string]any{
+		{
+			"tag":                "column_set",
+			"horizontal_spacing": "8px",
+			"horizontal_align":   "left",
+			"columns": []map[string]any{
+				{
+					"tag":    "column",
+					"width":  "weighted",
+					"weight": 1,
+					"elements": []map[string]any{
+						{
+							"tag":        "markdown",
+							"content":    "**工作目录**",
+							"text_align": "left",
+						},
+					},
+				},
+				{
+					"tag":    "column",
+					"width":  "weighted",
+					"weight": 3,
+					"elements": []map[string]any{
+						{
+							"tag":        "markdown",
+							"content":    path,
+							"text_align": "left",
+						},
+					},
+				},
+			},
+		},
+	}
+	// Build models info
+	if models != nil {
+		modelsInfo := string(models.CurrentModelId)
+		if len(models.AvailableModels) > 0 {
+			for _, m := range models.AvailableModels {
+				if models.CurrentModelId == m.ModelId {
+					modelsInfo = string(m.Name)
+					break
+				}
+			}
+		}
+		elements = append(elements, map[string]any{
+			"tag":                "column_set",
+			"horizontal_spacing": "8px",
+			"horizontal_align":   "left",
+			"columns": []map[string]any{
+				{
+					"tag":    "column",
+					"width":  "weighted",
+					"weight": 1,
+					"elements": []map[string]any{
+						{
+							"tag":        "markdown",
+							"content":    "**当前模型**",
+							"text_align": "left",
+						},
+					},
+				},
+				{
+					"tag":    "column",
+					"width":  "weighted",
+					"weight": 3,
+					"elements": []map[string]any{
+						{
+							"tag":        "div",
+							"text": map[string]any{
+								"tag":     "plain_text",
+								"content":    modelsInfo,
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	// Build modes info
+	if modes != nil {
+		modesInfo := string(modes.CurrentModeId)
+		if len(modes.AvailableModes) > 0 {
+			for _, m := range modes.AvailableModes {
+				if modes.CurrentModeId == m.Id {
+					modesInfo = string(m.Name)
+				}
+			}
+		}
+		elements = append(elements, map[string]any{
+			"tag":                "column_set",
+			"horizontal_spacing": "8px",
+			"horizontal_align":   "left",
+			"columns": []map[string]any{
+				{
+					"tag":    "column",
+					"width":  "weighted",
+					"weight": 1,
+					"elements": []map[string]any{
+						{
+							"tag":        "markdown",
+							"content":    "**当前模式**",
+							"text_align": "left",
+						},
+					},
+				},
+				{
+					"tag":    "column",
+					"width":  "weighted",
+					"weight": 3,
+					"elements": []map[string]any{
+						{
+							"tag":        "div",
+							"text": map[string]any{
+								"tag":     "plain_text",
+								"content":    modesInfo,
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	if models != nil && len(models.AvailableModels) > 0 {
+		options := make([]map[string]any, len(models.AvailableModels))
+		for i, m := range models.AvailableModels {
+			options[i] = map[string]any{
+				"text": map[string]any{
+					"tag":     "plain_text",
+					"content": m.Name,
+				},
+				"value": m.ModelId,
+			}
+		}
+		elements = append(elements, map[string]any{
+			"tag":                "column_set",
+			"horizontal_spacing": "8px",
+			"horizontal_align":   "left",
+			"columns": []map[string]any{
+				{
+					"tag":    "column",
+					"width":  "weighted",
+					"weight": 1,
+					"elements": []map[string]any{
+						{
+							"tag":        "markdown",
+							"content":    "**模型**",
+							"text_align": "left",
+						},
+					},
+				},
+				{
+					"tag":    "column",
+					"width":  "weighted",
+					"weight": 3,
+					"elements": []map[string]any{
+						{
+							"tag":           "select_static",
+							"name":          "model_select",
+							"initial_option": models.CurrentModelId,
+							"options":       options,
+							"width":         "fill",
+							"behaviors": []map[string]any{
+								{
+									"type": "callback",
+									"value": map[string]any{
+										"action":     "change_model",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+	if modes != nil && len(modes.AvailableModes) > 0 {
+		options := make([]map[string]any, len(modes.AvailableModes))
+		for i, m := range modes.AvailableModes {
+			options[i] = map[string]any{
+				"text": map[string]any{
+					"tag":     "plain_text",
+					"content": m.Name,
+				},
+				"value": m.Id,
+			}
+		}
+		elements = append(elements, map[string]any{
+			"tag":                "column_set",
+			"horizontal_spacing": "8px",
+			"horizontal_align":   "left",
+			"columns": []map[string]any{
+				{
+					"tag":    "column",
+					"width":  "weighted",
+					"weight": 1,
+					"elements": []map[string]any{
+						{
+							"tag":        "markdown",
+							"content":    "**模式**",
+							"text_align": "left",
+						},
+					},
+				},
+				{
+					"tag":    "column",
+					"width":  "weighted",
+					"weight": 3,
+					"elements": []map[string]any{
+						{
+							"tag":           "select_static",
+							"name":          "mode_select",
+							"initial_option": modes.CurrentModeId,
+							"options":       options,
+							"width":         "fill",
+							"behaviors": []map[string]any{
+								{
+									"type": "callback",
+									"value": map[string]any{
+										"action":     "change_mode",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+	}
+
+	card := map[string]any{
+		"schema": "2.0",
+		"header": map[string]any{
+			"title": map[string]any{
+				"tag":     "plain_text",
+				"content": fmt.Sprintf("Agent: %s", agent),
+			},
+			"template": "blue",
+		},
+		"body": map[string]any{
+			"elements": elements,
 		},
 	}
 	data, _ := json.Marshal(card)

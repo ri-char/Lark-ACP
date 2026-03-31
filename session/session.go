@@ -75,6 +75,12 @@ type SessionInfo struct {
 	Path              string `json:"path"`
 	ToolCallIdToInfo  map[string]*ToolCallIdInfo `json:"tool_call_map"`
 	PlanMsgId         *string `json:"plan_msg_id,omitempty"`
+	PinCardMsgId      *string `json:"pin_card_msg_id,omitempty"`
+
+	LastModelId       string `json:"last_model_id,omitempty"`
+	LastModeId        string `json:"last_mode_id,omitempty"`
+	Models *acpsdk.SessionModelState
+	Modes *acpsdk.SessionModeState
 
 	InStreaming		  bool   `json:"in_streaming"`
 	StreamingText     string `json:"streaming_text,omitempty"`
