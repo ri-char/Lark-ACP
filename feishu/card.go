@@ -271,7 +271,7 @@ func LoadSessionAgentSessionCard(sessions []acp.UnstableSessionInfo, agentId str
 				"content": "加载会话",
 			}, "subtitle": map[string]any{
 				"tag":     "plain_text",
-				"content": "选择会话",
+				"content": "选择" + agentId + "会话",
 			},
 			"template": "blue",
 		},
@@ -318,6 +318,51 @@ func LoadSessionAgentSessionCard(sessions []acp.UnstableSessionInfo, agentId str
 	return string(data)
 }
 
+func LoadSessionAgentSessionFreezeCard(agentId string) any {
+	// JSON 2.0 卡片结构
+	cardV2 := map[string]any{
+		"schema": "2.0",
+		"header": map[string]any{
+			"title": map[string]any{
+				"tag":     "plain_text",
+				"content": "加载会话",
+			}, "subtitle": map[string]any{
+				"tag":     "plain_text",
+				"content": "选择" + agentId + "会话",
+			},
+			"template": "grey",
+		},
+		"body": map[string]any{
+			"elements": []map[string]any{
+				{
+					"tag":  "form",
+					"name": "path_form",
+					"elements": []map[string]any{
+						{
+							"tag":      "select_static",
+							"name":     "session_id",
+							"disabled": true,
+							"width": "fill",
+						},
+						{
+							"tag":  "button",
+							"name": "load_session_session",
+							"text": map[string]any{
+								"tag":     "plain_text",
+								"content": "提交",
+							},
+							"disabled":         true,
+							"type":             "primary_filled",
+							"form_action_type": "submit",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	return cardV2
+}
 func ErrorCard(title, message string) string {
 	card := map[string]any{
 		"schema": "2.0",

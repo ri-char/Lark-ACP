@@ -71,7 +71,7 @@ func main() {
 	// Create WebSocket client for long connection
 	cli := larkws.NewClient(cfg.FeishuAppID, cfg.FeishuAppSecret,
 		larkws.WithEventHandler(eventHandler),
-		larkws.WithLogLevel(larkcore.LogLevelDebug),
+		larkws.WithLogLevel(larkcore.LogLevelWarn),
 	)
 
 	// Create cancelable context for WebSocket client
@@ -85,15 +85,11 @@ func main() {
 		}
 	}()
 
-	log.Println("Lark-ACP server started (WebSocket mode)")
-	log.Println("Waiting for events...")
-
 	// Wait for shutdown signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	// Cleanup
 	log.Println("Shutting down...")
 	cancel()
 	for _, agent := range app.agents {
@@ -231,7 +227,6 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 	case "new_session_form":
 		// 从 form_value 获取表单数据
 		formValue := action.FormValue
-		log.Printf("formValue: %v", formValue)
 		if formValue == nil {
 			return &callback.CardActionTriggerResponse{
 				Toast: &callback.Toast{
@@ -289,7 +284,6 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 	case "load_session_agent":
 		// 从 form_value 获取表单数据
 		formValue := action.FormValue
-		log.Printf("formValue: %v", formValue)
 		if formValue == nil {
 			return &callback.CardActionTriggerResponse{
 				Toast: &callback.Toast{
@@ -360,8 +354,14 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 			}, nil
 		}
 		msgId := event.Event.Context.OpenMessageID
+		
 		go app.handleLoadSessionStage2(ctx, openID, msgId, agentId, sessionID)
-		return &callback.CardActionTriggerResponse{}, nil
+		return &callback.CardActionTriggerResponse{
+			Card: &callback.Card{
+				Type: "raw",
+				Data: feishu.LoadSessionAgentSessionFreezeCard(agentId),
+			},
+		}, nil
 	}
 
 	// 处理权限选择
@@ -496,7 +496,7 @@ func (app *App) handleLoadSessionStage1(ctx context.Context, openID, msgId, agen
 		return
 	}
 
-	agent, err := acp.New(agentCfg.Cmd, app.feishu, app.permissionMgr)
+	agent, err := acp.New(agentCfg, app.feishu, app.permissionMgr)
 	if err != nil {
 		log.Printf("Failed to start ACP: %v", err)
 		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("Agent启动失败：%v", err)), msgId)
@@ -558,7 +558,7 @@ func (app *App) handleLoadSessionStage2(ctx context.Context, openID, msgId, agen
 		return
 	}
 
-	agent, err := acp.New(agentCfg.Cmd, app.feishu, app.permissionMgr)
+	agent, err := acp.New(agentCfg, app.feishu, app.permissionMgr)
 	if err != nil {
 		log.Printf("Failed to start ACP: %v", err)
 		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("Agent启动失败：%v", err)), msgId)
@@ -686,7 +686,7 @@ func (app *App) createSession(openID, agentName, path, msgId string) {
 		return
 	}
 
-	agent, err := acp.New(agentCfg.Cmd, app.feishu, app.permissionMgr)
+	agent, err := acp.New(agentCfg, app.feishu, app.permissionMgr)
 	if err != nil {
 		log.Printf("Failed to start ACP: %v", err)
 		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("创建会话失败", fmt.Sprintf("启动Agent失败: %v", err)), msgId)
@@ -788,7 +788,7 @@ func (app *App) restoreAgent(ctx context.Context, info *session.SessionInfo) (*a
 		return nil, false
 	}
 
-	newAgent, err := acp.New(agentConfig.Cmd, app.feishu, app.permissionMgr)
+	newAgent, err := acp.New(agentConfig, app.feishu, app.permissionMgr)
 	if err != nil {
 		log.Printf("Failed to create ACP client: %v", err)
 		return nil, false

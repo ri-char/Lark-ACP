@@ -33,7 +33,6 @@ func New(appID, appSecret string) (*Client, error) {
 
 // SendMessage sends a text message to a chat
 func (c *Client) SendMessage(ctx context.Context, chatID, content string) error {
-	log.Printf("send msg: %v", content)
 	send_data := map[string]string{
 		"text": content,
 	}

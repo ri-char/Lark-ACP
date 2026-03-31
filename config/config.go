@@ -8,8 +8,9 @@ import (
 )
 
 type AgentConfig struct {
-	Id  string   `toml:"id"`
-	Cmd []string `toml:"cmd"`
+	Id  string            `toml:"id"`
+	Cmd []string          `toml:"cmd"`
+	Env map[string]string `toml:"env"`
 }
 
 type Config struct {

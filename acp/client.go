@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 	acpsdk "github.com/coder/acp-go-sdk"
+	"github.com/ri-char/lark-acp/config"
 	"github.com/ri-char/lark-acp/feishu"
 	"github.com/ri-char/lark-acp/session"
 )
@@ -30,8 +31,13 @@ type Client struct {
 }
 
 // New creates a new ACP client by launching the agent command
-func New(cmdStr []string, feishu *feishu.Client, permissionMgr *session.PermissionManager) (*Client, error) {
-	cmd := exec.Command(cmdStr[0], cmdStr[1:]...)
+func New(config *config.AgentConfig, feishu *feishu.Client, permissionMgr *session.PermissionManager) (*Client, error) {
+	cmd := exec.Command(config.Cmd[0], config.Cmd[1:]...)
+	
+	cmd.Env = os.Environ()
+	for k, v := range config.Env {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -42,6 +48,7 @@ func New(cmdStr []string, feishu *feishu.Client, permissionMgr *session.Permissi
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
+	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start command: %w", err)
@@ -55,9 +62,7 @@ func New(cmdStr []string, feishu *feishu.Client, permissionMgr *session.Permissi
 		terminals:     NewTerminalManager(),
 	}
 
-	// Create client-side connection with our handler
-	wrappedStdout := NewJSONRPCReader(stdout)
-	c.conn = acpsdk.NewClientSideConnection(c, stdin, wrappedStdout)
+	c.conn = acpsdk.NewClientSideConnection(c, stdin, stdout)
 
 	return c, nil
 }

@@ -1,6 +1,6 @@
 # Lark-ACP
 
-连接飞书和ACP(Agent Communication Protocol)的工具。让你能够在飞书中使用OpenCode、Claude、Codex等任何支持ACP的工具。
+连接飞书和ACP(Agent Communication Protocol)的工具。让你能够在飞书中使用OpenCode、Claude、Codex、Qwen等任何支持ACP的工具。
 
 ## 效果图
 
@@ -30,6 +30,11 @@ cmd = ["opencode", "acp"]
 
 [[agent]]
 id = "claude"
+env = {
+   ANTHROPIC_AUTH_TOKEN="sk-xxxxxxxxxx",
+   ANTHROPIC_BASE_URL="https://xxxxxxxxxxxxx",
+   ANTHROPIC_MODEL="gpt-5.4"
+}
 cmd = ["claude-agent-acp"]
 
 [[agent]]
@@ -41,10 +46,15 @@ cmd = ["codex-acp"]
 
 | Agent | 依赖 | 命令 |
 |-------|------|------|
-| opencode | 无需其它工具 | `opencode acp` |
-| claude code | [agentclientprotocol/claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp/releases) | `claude-agent-acp` |
-| codex | [zed-industries/codex-acp](https://github.com/zed-industries/codex-acp/releases) | `codex-acp` |
-
+| OpenCode | - | `opencode acp` |
+| Codex | [zed-industries/codex-acp](https://github.com/zed-industries/codex-acp/releases) | `codex-acp` |
+| Claude Code | [agentclientprotocol/claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp/releases) | `claude-agent-acp` |
+| Gemini | - | `gemini --experimental-acp` |
+| GitHub Copilot | - | `npx @github/copilot-language-server@latest --acp` |
+| Qwen Code | - | `qwen --acp` |
+| Auggie Code | - | `auggie --acp` |
+| Qoder | - | `qodercli --acp` |
+| OpenClaw | - | `openclaw acp` |
 
 ## 使用
 
