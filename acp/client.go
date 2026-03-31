@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/coder/acp-go-sdk"
 	acpsdk "github.com/coder/acp-go-sdk"
 	"github.com/ri-char/lark-acp/feishu"
 	"github.com/ri-char/lark-acp/session"
@@ -25,11 +26,12 @@ type Client struct {
 	feishu        *feishu.Client
 	permissionMgr *session.PermissionManager
 	terminals     *TerminalManager
+	Capabilities  []string
 }
 
 // New creates a new ACP client by launching the agent command
-func New(cmdStr string, feishu *feishu.Client, permissionMgr *session.PermissionManager) (*Client, error) {
-	cmd := exec.Command("sh", "-c", cmdStr)
+func New(cmdStr []string, feishu *feishu.Client, permissionMgr *session.PermissionManager) (*Client, error) {
+	cmd := exec.Command(cmdStr[0], cmdStr[1:]...)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -60,9 +62,19 @@ func New(cmdStr string, feishu *feishu.Client, permissionMgr *session.Permission
 	return c, nil
 }
 
+// contains checks if a string exists in a slice of strings
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
 // Initialize initializes the ACP connection
 func (c *Client) Initialize(ctx context.Context) error {
-	_, err := c.conn.Initialize(ctx, acpsdk.InitializeRequest{
+	resp, err := c.conn.Initialize(ctx, acpsdk.InitializeRequest{
 		ProtocolVersion: acpsdk.ProtocolVersionNumber,
 		ClientCapabilities: acpsdk.ClientCapabilities{
 			Fs: acpsdk.FileSystemCapability{
@@ -72,6 +84,12 @@ func (c *Client) Initialize(ctx context.Context) error {
 			Terminal: true,
 		},
 	})
+	if resp.AgentCapabilities.LoadSession {
+		c.Capabilities = append(c.Capabilities, "load_session")
+	}
+	if resp.AgentCapabilities.SessionCapabilities.List != nil {
+		c.Capabilities = append(c.Capabilities, "list_session")
+	}
 	return err
 }
 
@@ -83,7 +101,7 @@ func (c *Client) CreateSession(ctx context.Context, cwd string) (string, *acpsdk
 		McpServers: []acpsdk.McpServer{},
 	})
 	if err != nil {
-		return "",nil, nil, err
+		return "", nil, nil, err
 	}
 	return string(resp.SessionId), resp.Models, resp.Modes, nil
 }
@@ -91,6 +109,9 @@ func (c *Client) CreateSession(ctx context.Context, cwd string) (string, *acpsdk
 // LoadSession loads an existing ACP session
 // cwd must be an absolute path
 func (c *Client) LoadSession(ctx context.Context, sessionID, cwd string) (*acpsdk.SessionModelState, *acpsdk.SessionModeState, error) {
+	if !contains(c.Capabilities, "load_session") {
+		return nil, nil, fmt.Errorf("agent does not support load_session capability")
+	}
 	resp, err := c.conn.LoadSession(ctx, acpsdk.LoadSessionRequest{
 		SessionId:  acpsdk.SessionId(sessionID),
 		Cwd:        cwd,
@@ -101,9 +122,9 @@ func (c *Client) LoadSession(ctx context.Context, sessionID, cwd string) (*acpsd
 }
 
 func (c *Client) SetModel(ctx context.Context, sessionID, modelId string) error {
-	_, err := c.conn.SetSessionModel(ctx, acpsdk.SetSessionModelRequest{
+	_, err := c.conn.UnstableSetSessionModel(ctx, acpsdk.UnstableSetSessionModelRequest{
 		SessionId: acpsdk.SessionId(sessionID),
-		ModelId:   acpsdk.ModelId(modelId),
+		ModelId:   acpsdk.UnstableModelId(modelId),
 	})
 	if err != nil {
 		return err
@@ -114,13 +135,14 @@ func (c *Client) SetModel(ctx context.Context, sessionID, modelId string) error 
 func (c *Client) SetMode(ctx context.Context, sessionID, modeId string) error {
 	_, err := c.conn.SetSessionMode(ctx, acpsdk.SetSessionModeRequest{
 		SessionId: acpsdk.SessionId(sessionID),
-		ModeId:   acpsdk.SessionModeId(modeId),
+		ModeId:    acpsdk.SessionModeId(modeId),
 	})
 	if err != nil {
 		return err
 	}
 	return nil
 }
+
 // SendMessage sends a prompt to the ACP session
 func (c *Client) SendMessage(ctx context.Context, sessionID, content string) error {
 	_, err := c.conn.Prompt(ctx, acpsdk.PromptRequest{
@@ -128,6 +150,28 @@ func (c *Client) SendMessage(ctx context.Context, sessionID, content string) err
 		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(content)},
 	})
 	return err
+}
+
+func (c *Client) ListSessions(ctx context.Context) ([]acp.UnstableSessionInfo, error) {
+	if !contains(c.Capabilities, "list_session") {
+		return nil, fmt.Errorf("agent does not support list_session capability")
+	}
+	var cursor *string
+	var sessionIDs []acp.UnstableSessionInfo
+	for {
+		resp, err := c.conn.UnstableListSessions(ctx, acpsdk.UnstableListSessionsRequest{
+			Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		sessionIDs = append(sessionIDs, resp.Sessions...)
+		if resp.NextCursor == nil {
+			break
+		}
+		cursor = resp.NextCursor
+	}
+	return sessionIDs, nil
 }
 
 // SetSessionChatID associates a session with a Feishu chat ID for callbacks
@@ -349,14 +393,19 @@ func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification
 	case u.UserMessageChunk != nil:
 		// Skip user message chunks, we already know what user sent
 		return nil
+	case u.CurrentModeUpdate != nil:
+		sessionInfo.LastModeId = string(u.CurrentModeUpdate.CurrentModeId)
+		if sessionInfo.Modes != nil {
+			sessionInfo.Modes.CurrentModeId = acpsdk.SessionModeId(u.CurrentModeUpdate.CurrentModeId)
+		}
+		c.feishu.SendOrUpdatePinCard(ctx, sessionInfo)
 	}
 
 	return nil
 }
 
-
 func (c *Client) ResetStreaming(s *session.SessionInfo) {
-	if s.InStreaming{
+	if s.InStreaming {
 		s.StreamingId += 1
 		c.feishu.UpdateCard(context.Background(), s.StreamingCardId, feishu.StreamingCardEndSetting(), s.StreamingId)
 	}
@@ -395,7 +444,6 @@ func (c *Client) AddStreamingChunk(s *session.SessionInfo, kind string, text str
 		c.feishu.UpdateCardElement(context.Background(), s.StreamingCardId, "markdown_main", s.StreamingText, s.StreamingId)
 	}
 
-	
 }
 
 // Done returns a channel that closes when the connection is closed

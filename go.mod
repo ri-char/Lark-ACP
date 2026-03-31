@@ -5,9 +5,8 @@ go 1.25.7
 require (
 	github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 	github.com/pelletier/go-toml/v2 v2.3.0
+	github.com/coder/acp-go-sdk v0.6.4-0.20260227160919-584abe6abe22
 )
-
-require github.com/coder/acp-go-sdk v0.6.3
 
 require (
 	github.com/gogo/protobuf v1.3.2 // indirect

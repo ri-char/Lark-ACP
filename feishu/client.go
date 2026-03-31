@@ -10,6 +10,7 @@ import (
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	"github.com/ri-char/lark-acp/session"
 )
 
 type Client struct {
@@ -160,7 +161,7 @@ func (c *Client) CreateGroup(ctx context.Context, name string, userID string) (s
 	return *resp.Data.ChatId, nil
 }
 
-func (c *Client) GetGroupShareLink(ctx context.Context, chatID string) (string, error) {
+func (c *Client) GetGroupShareLink(ctx context.Context, chatID string) (*larkim.LinkChatResp, error) {
 	req := larkim.NewLinkChatReqBuilder().
 		Body(&larkim.LinkChatReqBody{
 			ValidityPeriod: larkcore.StringPtr("permanently"),
@@ -169,13 +170,9 @@ func (c *Client) GetGroupShareLink(ctx context.Context, chatID string) (string, 
 		Build()
 	resp, err := c.client.Im.Chat.Link(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("failed to get share link for group: %w", err)
+		return nil, fmt.Errorf("failed to get share link for group: %w", err)
 	}
-
-	if !resp.Success() {
-		return "", fmt.Errorf("failed to get share link for group: code=%d, msg=%s", resp.Code, resp.Msg)
-	}
-	return *resp.Data.ShareLink, nil
+	return resp, nil
 }
 
 func (c *Client) DeleteGroup(ctx context.Context, chatID string) error {
@@ -290,4 +287,27 @@ func (c *Client) PinMessage(ctx context.Context, msgId string) error {
 		return fmt.Errorf("failed to pin message: code=%d, msg=%s", resp.Code, resp.Msg)
 	}
 	return nil
+}
+
+func (c *Client) SendOrUpdatePinCard(ctx context.Context, sessionInfo *session.SessionInfo) {
+	cardContent := GroupPinHeaderCard(sessionInfo.AgentName, sessionInfo.Path, sessionInfo.Models, sessionInfo.Modes)
+	if sessionInfo.PinCardMsgId != nil {
+		if err := c.UpdateInteractiveCard(ctx, cardContent, *sessionInfo.PinCardMsgId); err != nil {
+			log.Printf("Failed to update pin card: %v", err)
+		}
+	} else {
+		msgID, err := c.SendInteractiveCard(ctx, sessionInfo.FeishuChatID, cardContent)
+		if err != nil {
+			log.Printf("Failed to send pin card: %v", err)
+			return
+		}
+		sessionInfo.PinCardMsgId = msgID
+		if msgID != nil {
+			err := c.PinMessage(ctx, *msgID)
+			if err != nil {
+				log.Printf("Failed to pin message: %v", err)
+			}
+		}
+
+	}
 }

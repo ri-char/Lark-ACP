@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/coder/acp-go-sdk"
 	acpsdk "github.com/coder/acp-go-sdk"
 	larkcard "github.com/larksuite/oapi-sdk-go/v3/card"
 	"github.com/ri-char/lark-acp/session"
@@ -150,6 +151,199 @@ func AgentSelectionCard(agents []string) string {
 	return string(data)
 }
 
+// PathInputCard creates a card for path input
+func LoadSessionAgentSelectionCard(agents []string) string {
+	// 构建 agent 选项列表
+	options := make([]map[string]any, len(agents))
+	for i, agent := range agents {
+		options[i] = map[string]any{
+			"text": map[string]any{
+				"tag":     "plain_text",
+				"content": agent,
+			},
+			"value": agent,
+		}
+	}
+
+	// JSON 2.0 卡片结构
+	cardV2 := map[string]any{
+		"schema": "2.0",
+		"header": map[string]any{
+			"title": map[string]any{
+				"tag":     "plain_text",
+				"content": "加载会话",
+			},
+			"template": "blue",
+		},
+		"body": map[string]any{
+			"elements": []map[string]any{
+				{
+					"tag":  "form",
+					"name": "path_form",
+					"elements": []map[string]any{
+						{
+							"tag":                "column_set",
+							"horizontal_spacing": "8px",
+							"horizontal_align":   "left",
+							"columns": []map[string]any{
+								{
+									"tag":    "column",
+									"width":  "weighted",
+									"weight": 1,
+									"elements": []map[string]any{
+										{
+											"tag":        "markdown",
+											"content":    "**Agent类型**<font color='red'>*</font>",
+											"text_align": "left",
+										},
+									},
+								},
+								{
+									"tag":    "column",
+									"width":  "weighted",
+									"weight": 4,
+									"elements": []map[string]any{
+										{
+											"tag":           "select_static",
+											"name":          "agent_type",
+											"required":      true,
+											"initial_index": 1,
+											"options":       options,
+											"width":         "fill",
+										},
+									},
+								},
+							},
+						},
+						{
+							"tag":                "column_set",
+							"horizontal_spacing": "8px",
+							"horizontal_align":   "right",
+							"columns": []map[string]any{
+								{
+									"tag":   "column",
+									"width": "auto",
+									"elements": []map[string]any{
+										{
+											"tag":  "button",
+											"name": "load_session_agent",
+											"text": map[string]any{
+												"tag":     "plain_text",
+												"content": "提交",
+											},
+											"type":             "primary_filled",
+											"form_action_type": "submit",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	data, _ := json.Marshal(cardV2)
+	return string(data)
+}
+
+// PathInputCard creates a card for path input
+func LoadSessionAgentSessionCard(sessions []acp.UnstableSessionInfo, agentId string) string {
+	// 构建 agent 选项列表
+	options := make([]map[string]any, len(sessions))
+	for i, session := range sessions {
+		options[i] = map[string]any{
+			"text": map[string]any{
+				"tag":     "plain_text",
+				"content": session.Title,
+			},
+			"value": session.SessionId,
+		}
+	}
+
+	// JSON 2.0 卡片结构
+	cardV2 := map[string]any{
+		"schema": "2.0",
+		"header": map[string]any{
+			"title": map[string]any{
+				"tag":     "plain_text",
+				"content": "加载会话",
+			}, "subtitle": map[string]any{
+				"tag":     "plain_text",
+				"content": "选择会话",
+			},
+			"template": "blue",
+		},
+		"body": map[string]any{
+			"elements": []map[string]any{
+				{
+					"tag":  "form",
+					"name": "path_form",
+					"elements": []map[string]any{
+						{
+							"tag":           "select_static",
+							"name":          "session_id",
+							"required":      true,
+							"initial_index": 1,
+							"options":       options,
+							"width":         "fill",
+						},
+						{
+							"tag":  "button",
+							"name": "load_session_session",
+							"text": map[string]any{
+								"tag":     "plain_text",
+								"content": "提交",
+							},
+							"type":             "primary_filled",
+							"form_action_type": "submit",
+							"behaviors": []map[string]any{
+								{
+									"type": "callback",
+									"value": map[string]any{
+										"action":   "load_session_session",
+										"agent_id": agentId,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	data, _ := json.Marshal(cardV2)
+	return string(data)
+}
+
+func ErrorCard(title, message string) string {
+	card := map[string]any{
+		"schema": "2.0",
+		"header": map[string]any{
+			"title": map[string]any{
+				"tag":     "plain_text",
+				"content": title,
+			},
+			"template": "red",
+		},
+		"body": map[string]any{
+			"elements": []map[string]any{
+				{
+					"tag": "div",
+					"text": map[string]any{
+						"tag":     "lark_md",
+						"content": message,
+					},
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(card)
+	return string(data)
+}
+
 func AgentSelectionFreezeCard(agentName, path string) any {
 	// JSON 2.0 卡片结构
 	cardV2 := map[string]any{
@@ -269,40 +463,44 @@ func AgentSelectionFreezeCard(agentName, path string) any {
 }
 
 // CreateSessionConfirmCard creates a confirmation card after session creation
-func NewSessionFinishCard(agentName, path, link string) string {
+func NewSessionFinishCard(agentName, path, link, title string) string {
+	ele := []map[string]any{
+		{
+			"tag": "div",
+			"text": map[string]any{
+				"tag":     "lark_md",
+				"content": fmt.Sprintf("Agent类型: `%s`\n工作路径: `%s`", agentName, path),
+			},
+		},
+	}
+	if link != "" {
+		ele = append(ele, map[string]any{
+			"tag":  "button",
+			"type": "primary",
+			"text": map[string]any{
+				"tag":     "plain_text",
+				"content": "进入群聊",
+			},
+			"behaviors": []map[string]any{
+				{
+					"type":        "open_url",
+					"default_url": link,
+				},
+			},
+		})
+	}
+
 	card := map[string]any{
 		"schema": "2.0",
 		"header": map[string]any{
 			"title": map[string]any{
 				"tag":     "plain_text",
-				"content": "会话已创建",
+				"content": title,
 			},
 			"template": "green",
 		},
 		"body": map[string]any{
-			"elements": []map[string]any{
-				{
-					"tag": "div",
-					"text": map[string]any{
-						"tag":     "lark_md",
-						"content": fmt.Sprintf("Agent类型: `%s`\n工作路径: `%s`", agentName, path),
-					},
-				},
-				{
-					"tag":  "button",
-					"type": "primary",
-					"text": map[string]any{
-						"tag":     "plain_text",
-						"content": "进入群聊",
-					},
-					"behaviors": []map[string]any{
-						{
-							"type":        "open_url",
-							"default_url": link,
-						},
-					},
-				},
-			},
+			"elements": ele,
 		},
 	}
 	data, _ := json.Marshal(card)
@@ -444,7 +642,7 @@ func NewCardActionHandler(verificationToken, encryptKey string, handler func(ctx
 }
 
 // PermissionCard creates a card for permission request
-func PermissionCard(sessionID, requestID string, options []acpsdk.PermissionOption, toolCall acpsdk.RequestPermissionToolCall) string {
+func PermissionCard(sessionID, requestID string, options []acpsdk.PermissionOption, toolCall acpsdk.ToolCallUpdate) string {
 	// 构建 toolCall 信息
 	var infoBuilder strings.Builder
 
@@ -460,21 +658,6 @@ func PermissionCard(sessionID, requestID string, options []acpsdk.PermissionOpti
 			} else {
 				infoBuilder.WriteString(fmt.Sprintf("- `%s`\n", loc.Path))
 			}
-		}
-	}
-
-	if toolCall.RawInput != nil {
-		if input, ok := toolCall.RawInput.(string); ok {
-			if len(input) > 200 {
-				input = input[:200] + "..."
-			}
-			infoBuilder.WriteString(fmt.Sprintf("**输入:**\n```\n%s\n```\n", input))
-		} else if b, err := json.Marshal(toolCall.RawInput); err == nil {
-			input := string(b)
-			if len(input) > 200 {
-				input = input[:200] + "..."
-			}
-			infoBuilder.WriteString(fmt.Sprintf("**输入:**\n```json\n%s\n```\n", input))
 		}
 	}
 
@@ -573,7 +756,7 @@ func PermissionCard(sessionID, requestID string, options []acpsdk.PermissionOpti
 	data, _ := json.Marshal(card)
 	return string(data)
 }
-func PermissionFreezeCard(options []acpsdk.PermissionOption, toolCall acpsdk.RequestPermissionToolCall, cancel bool, option string) map[string]any {
+func PermissionFreezeCard(options []acpsdk.PermissionOption, toolCall acpsdk.ToolCallUpdate, cancel bool, option string) map[string]any {
 	// 构建 toolCall 信息
 	var infoBuilder strings.Builder
 
@@ -591,7 +774,6 @@ func PermissionFreezeCard(options []acpsdk.PermissionOption, toolCall acpsdk.Req
 			}
 		}
 	}
-
 	if toolCall.RawInput != nil {
 		if input, ok := toolCall.RawInput.(string); ok {
 			if len(input) > 200 {
@@ -796,10 +978,10 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 					"weight": 3,
 					"elements": []map[string]any{
 						{
-							"tag":        "div",
+							"tag": "div",
 							"text": map[string]any{
 								"tag":     "plain_text",
-								"content":    modelsInfo,
+								"content": modelsInfo,
 							},
 						},
 					},
@@ -841,10 +1023,10 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 					"weight": 3,
 					"elements": []map[string]any{
 						{
-							"tag":        "div",
+							"tag": "div",
 							"text": map[string]any{
 								"tag":     "plain_text",
-								"content":    modesInfo,
+								"content": modesInfo,
 							},
 						},
 					},
@@ -887,16 +1069,16 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 					"weight": 3,
 					"elements": []map[string]any{
 						{
-							"tag":           "select_static",
-							"name":          "model_select",
+							"tag":            "select_static",
+							"name":           "model_select",
 							"initial_option": models.CurrentModelId,
-							"options":       options,
-							"width":         "fill",
+							"options":        options,
+							"width":          "fill",
 							"behaviors": []map[string]any{
 								{
 									"type": "callback",
 									"value": map[string]any{
-										"action":     "change_model",
+										"action": "change_model",
 									},
 								},
 							},
@@ -940,16 +1122,16 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 					"weight": 3,
 					"elements": []map[string]any{
 						{
-							"tag":           "select_static",
-							"name":          "mode_select",
+							"tag":            "select_static",
+							"name":           "mode_select",
 							"initial_option": modes.CurrentModeId,
-							"options":       options,
-							"width":         "fill",
+							"options":        options,
+							"width":          "fill",
 							"behaviors": []map[string]any{
 								{
 									"type": "callback",
 									"value": map[string]any{
-										"action":     "change_mode",
+										"action": "change_mode",
 									},
 								},
 							},

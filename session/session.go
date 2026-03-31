@@ -20,7 +20,7 @@ type PendingPermission struct {
 	SessionID string
 	Options   []acpsdk.PermissionOption
 	Response  chan PermissionResponse
-	ToolCall  acpsdk.RequestPermissionToolCall
+	ToolCall  acpsdk.ToolCallUpdate
 }
 
 // PermissionManager manages pending permission requests
@@ -73,7 +73,7 @@ type SessionInfo struct {
 	ACPSessionID      string `json:"acp_session_id"`
 	AgentName         string `json:"agent_name"`
 	Path              string `json:"path"`
-	ToolCallIdToInfo  map[string]*ToolCallIdInfo `json:"tool_call_map"`
+	ToolCallIdToInfo  map[string]*ToolCallIdInfo
 	PlanMsgId         *string `json:"plan_msg_id,omitempty"`
 	PinCardMsgId      *string `json:"pin_card_msg_id,omitempty"`
 
@@ -161,11 +161,11 @@ func (s *SessionStore) Get(chatID string) (*SessionInfo, bool) {
 	return info, ok
 }
 
-func (s *SessionStore) GetByACPSession(acpSessionID string) (*SessionInfo, bool) {
+func (s *SessionStore) GetByACPSession(agentName, acpSessionID string) (*SessionInfo, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, info := range s.Sessions {
-		if info.ACPSessionID == acpSessionID {
+		if info.ACPSessionID == acpSessionID && info.AgentName == agentName {
 			return info, true
 		}
 	}

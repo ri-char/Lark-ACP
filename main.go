@@ -165,6 +165,8 @@ func (app *App) handleBotMenu(ctx context.Context, event *larkapplication.P2BotM
 	switch eventKey {
 	case "new_session":
 		return app.handleNewSession(ctx, openID)
+	case "load_session":
+		return app.handleLoadSession(ctx, openID)
 	}
 
 	return nil
@@ -277,13 +279,89 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 			path = absPath
 		}
 
-		go app.createSession(openID, agentName, path)
+		go app.createSession(openID, agentName, path, event.Event.Context.OpenMessageID)
 		return &callback.CardActionTriggerResponse{
 			Card: &callback.Card{
 				Type: "raw",
 				Data: feishu.AgentSelectionFreezeCard(agentName, path),
 			},
 		}, nil
+	case "load_session_agent":
+		// 从 form_value 获取表单数据
+		formValue := action.FormValue
+		log.Printf("formValue: %v", formValue)
+		if formValue == nil {
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: "表单数据无效",
+				},
+			}, nil
+		}
+
+		// 获取选择的 agent
+		agentName := ""
+		if v, ok := formValue["agent_type"].(string); ok {
+			agentName = v
+		}
+
+		if agentName == "" {
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: "请选择 Agent",
+				},
+			}, nil
+		}
+		msgId := event.Event.Context.OpenMessageID
+		go app.handleLoadSessionStage1(ctx, openID, msgId, agentName)
+
+		return &callback.CardActionTriggerResponse{}, nil
+	case "load_session_session":
+		formValue := action.FormValue
+		if formValue == nil {
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: "表单数据无效",
+				},
+			}, nil
+		}
+		otherValue := action.Value
+		if otherValue == nil {
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: "表单数据无效",
+				},
+			}, nil
+		}
+		agentId, ok := otherValue["agent_id"].(string)
+		if !ok {
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: "表单数据无效",
+				},
+			}, nil
+		}
+
+		sessionID := ""
+		if v, ok := formValue["session_id"].(string); ok {
+			sessionID = v
+		}
+
+		if sessionID == "" {
+			return &callback.CardActionTriggerResponse{
+				Toast: &callback.Toast{
+					Type:    "error",
+					Content: "请选择会话",
+				},
+			}, nil
+		}
+		msgId := event.Event.Context.OpenMessageID
+		go app.handleLoadSessionStage2(ctx, openID, msgId, agentId, sessionID)
+		return &callback.CardActionTriggerResponse{}, nil
 	}
 
 	// 处理权限选择
@@ -375,7 +453,7 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 			sessionInfo.Models.CurrentModelId = acpsdk.ModelId(action.Option)
 		}
 		app.store.Save()
-		go app.sendOrUpdatePinCard(ctx, sessionInfo)
+		go app.feishu.SendOrUpdatePinCard(ctx, sessionInfo)
 		return &callback.CardActionTriggerResponse{
 			Toast: &callback.Toast{
 				Type:    "success",
@@ -419,7 +497,7 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 			sessionInfo.Modes.CurrentModeId = acpsdk.SessionModeId(action.Option)
 		}
 		app.store.Save()
-		go app.sendOrUpdatePinCard(ctx, sessionInfo)
+		go app.feishu.SendOrUpdatePinCard(ctx, sessionInfo)
 		return &callback.CardActionTriggerResponse{
 			Toast: &callback.Toast{
 				Type:    "success",
@@ -436,8 +514,8 @@ func (app *App) handleNewSession(ctx context.Context, openID string) error {
 	log.Printf("New session request from: %s", openID)
 
 	agentNames := make([]string, 0, len(app.cfg.Agents))
-	for name := range app.cfg.Agents {
-		agentNames = append(agentNames, name)
+	for _, agents := range app.cfg.Agents {
+		agentNames = append(agentNames, agents.Id)
 	}
 
 	if len(agentNames) == 0 {
@@ -453,36 +531,130 @@ func (app *App) handleNewSession(ctx context.Context, openID string) error {
 	return nil
 }
 
-// createSession creates an ACP session and Feishu group
-func (app *App) createSession(openID, agentName, path string) {
-	ctx := context.Background()
+func (app *App) handleLoadSession(ctx context.Context, openID string) error {
+	log.Printf("Load session request from: %s", openID)
+	agentNames := make([]string, 0, len(app.cfg.Agents))
+	for _, agents := range app.cfg.Agents {
+		agentNames = append(agentNames, agents.Id)
+	}
+	cardContent := feishu.LoadSessionAgentSelectionCard(agentNames)
+	if err := app.feishu.SendInteractiveCardToUser(ctx, openID, cardContent); err != nil {
+		return fmt.Errorf("failed to send agent selection card: %w", err)
+	}
+	log.Printf("Load session agent selection card sent to: %s", openID)
+	return nil
+}
 
-	agentCfg, ok := app.cfg.Agents[agentName]
+func (app *App) handleLoadSessionStage1(ctx context.Context, openID, msgId, agentName string) {
+	agentCfg, ok := app.cfg.FindAgentById(agentName)
 	if !ok {
 		log.Printf("Agent %s not found", agentName)
-		app.feishu.SendPrivateMessage(ctx, openID, fmt.Sprintf("Error: Agent %s not found", agentName), "text")
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("Agent%s无法找到", agentName)), msgId)
 		return
 	}
 
 	agent, err := acp.New(agentCfg.Cmd, app.feishu, app.permissionMgr)
 	if err != nil {
 		log.Printf("Failed to start ACP: %v", err)
-		app.feishu.SendPrivateMessage(ctx, openID, fmt.Sprintf("Error: Failed to start agent: %v", err), "text")
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("Agent启动失败：%v", err)), msgId)
 		return
 	}
-
-	if err := agent.Initialize(ctx); err != nil {
+	err = agent.Initialize(ctx)
+	if err != nil {
 		agent.Close()
 		log.Printf("Failed to initialize ACP: %v", err)
-		app.feishu.SendPrivateMessage(ctx, openID, fmt.Sprintf("Error: Failed to initialize agent: %v", err), "text")
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("Agent初始化失败：%v", err)), msgId)
+		return
+	}
+	sessions, err := agent.ListSessions(ctx)
+	if err != nil {
+		agent.Close()
+		log.Printf("Failed to list sessions: %v", err)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("获取会话列表失败：%v", err)), msgId)
+		return
+	}
+	if len(sessions) == 0 {
+		agent.Close()
+		log.Printf("No sessions found for agent: %s", agentName)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", "没有可用的会话"), msgId)
+		return
+	}
+	cardContent := feishu.LoadSessionAgentSessionCard(sessions, agentName)
+	if err := app.feishu.UpdateInteractiveCard(ctx, cardContent, msgId); err != nil {
+		log.Printf("Failed to send session selection card: %v", err)
+	}
+	log.Printf("Session selection card sent to: %s", openID)
+	agent.Close()
+}
+
+func (app *App) handleLoadSessionStage2(ctx context.Context, openID, msgId, agentName, sessionID string) {
+	existed_session, ok := app.store.GetByACPSession(agentName, sessionID)
+	if ok {
+		chatId := existed_session.FeishuChatID
+		shareUrlResp, err := app.feishu.GetGroupShareLink(ctx, chatId)
+		if err != nil {
+			log.Printf("Failed to get share link for existing session: %v", err)
+			app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("获取现有群链接失败：%v", err)), msgId)
+			return
+		}
+		if shareUrlResp.Success() && shareUrlResp.Data != nil && shareUrlResp.Data.ShareLink != nil {
+			shareUrl := *shareUrlResp.Data.ShareLink
+			app.feishu.UpdateInteractiveCard(ctx, feishu.NewSessionFinishCard(agentName, existed_session.Path, shareUrl, "恢复会话 - 会话已存在"), msgId)
+			return
+		}
+		if shareUrlResp.Code == 232019 || shareUrlResp.Code == 232065 {
+			log.Printf("Failed to get share link for existing session: %v", err)
+			app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("获取现有群链接失败：%v", shareUrlResp.Msg)), msgId)
+			return
+		}
+	}
+	agentCfg, ok := app.cfg.FindAgentById(agentName)
+	if !ok {
+		log.Printf("Agent %s not found", agentName)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("Agent%s无法找到", agentName)), msgId)
 		return
 	}
 
-	sessionID, models, modes, err := agent.CreateSession(ctx, path)
+	agent, err := acp.New(agentCfg.Cmd, app.feishu, app.permissionMgr)
+	if err != nil {
+		log.Printf("Failed to start ACP: %v", err)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("Agent启动失败：%v", err)), msgId)
+		return
+	}
+	err = agent.Initialize(ctx)
+	if err != nil {
+		agent.Close()
+		log.Printf("Failed to initialize ACP: %v", err)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("Agent初始化失败：%v", err)), msgId)
+		return
+	}
+	path := ""
+	sessions, err := agent.ListSessions(ctx)
+	if err != nil {
+		agent.Close()
+		log.Printf("Failed to list sessions: %v", err)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("获取会话列表失败：%v", err)), msgId)
+		return
+	}
+	found := false
+	for _, s := range sessions {
+		if string(s.SessionId) == sessionID {
+			path = s.Cwd
+			found = true
+			break
+		}
+	}
+	if !found {
+		agent.Close()
+		log.Printf("Session %s not found for agent: %s", sessionID, agentName)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", "会话未找到"), msgId)
+		return
+	}
+	models, modes, err := agent.LoadSession(ctx, sessionID, path)
 	if err != nil {
 		agent.Close()
 		log.Printf("Failed to create ACP session: %v", err)
-		app.feishu.SendPrivateMessage(ctx, openID, fmt.Sprintf("Error: Failed to create session: %v", err), "text")
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("恢复会话失败: %v", err)), msgId)
 		return
 	}
 
@@ -490,7 +662,7 @@ func (app *App) createSession(openID, agentName, path string) {
 	if err != nil {
 		agent.Close()
 		log.Printf("Failed to create group: %v", err)
-		app.feishu.SendPrivateMessage(ctx, openID, fmt.Sprintf("Error: Failed to create group: %v", err), "text")
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("创建群组失败: %v", err)), msgId)
 		return
 	}
 
@@ -509,9 +681,81 @@ func (app *App) createSession(openID, agentName, path string) {
 		log.Printf("Warning: failed to save session: %v", err)
 	}
 	agent.SetSessionChatID(&sessionInfo)
-	link, err := app.feishu.GetGroupShareLink(ctx, groupChatID)
-	app.feishu.SendInteractiveCardToUser(ctx, openID, feishu.NewSessionFinishCard(agentName, path, link))
-	app.sendOrUpdatePinCard(ctx, &sessionInfo)
+	shareLinkResp, err := app.feishu.GetGroupShareLink(ctx, groupChatID)
+	if err != nil || !shareLinkResp.Success() || shareLinkResp.Data.ShareLink == nil {
+		log.Printf("Failed to get group share link: %v", err)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.NewSessionFinishCard(agentName, path, "", "会话已恢复（获取分享链接失败）"), msgId)
+		return
+	}
+	app.feishu.UpdateInteractiveCard(ctx, feishu.NewSessionFinishCard(agentName, path, *shareLinkResp.Data.ShareLink, "会话已恢复"), msgId)
+	app.feishu.SendOrUpdatePinCard(ctx, &sessionInfo)
+	app.store.Save()
+
+}
+
+// createSession creates an ACP session and Feishu group
+func (app *App) createSession(openID, agentName, path, msgId string) {
+	ctx := context.Background()
+	agentCfg, ok := app.cfg.FindAgentById(agentName)
+	if !ok {
+		log.Printf("Agent %s not found", agentName)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("创建会话失败", fmt.Sprintf("Agent%s无法找到", agentName)), msgId)
+		return
+	}
+
+	agent, err := acp.New(agentCfg.Cmd, app.feishu, app.permissionMgr)
+	if err != nil {
+		log.Printf("Failed to start ACP: %v", err)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("创建会话失败", fmt.Sprintf("启动Agent失败: %v", err)), msgId)
+		return
+	}
+
+	if err := agent.Initialize(ctx); err != nil {
+		agent.Close()
+		log.Printf("Failed to initialize ACP: %v", err)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("创建会话失败", fmt.Sprintf("初始化Agent失败: %v", err)), msgId)
+		return
+	}
+
+	sessionID, models, modes, err := agent.CreateSession(ctx, path)
+	if err != nil {
+		agent.Close()
+		log.Printf("Failed to create ACP session: %v", err)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("创建会话失败", fmt.Sprintf("创建会话失败: %v", err)), msgId)
+		return
+	}
+
+	groupChatID, err := app.feishu.CreateGroup(ctx, fmt.Sprintf("%s: %s", agentName, filepath.Base(path)), openID)
+	if err != nil {
+		agent.Close()
+		log.Printf("Failed to create group: %v", err)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("创建会话失败", fmt.Sprintf("创建群组失败: %v", err)), msgId)
+		return
+	}
+
+	app.agents[groupChatID] = agent
+	app.sessionToChat[sessionID] = groupChatID
+	sessionInfo := session.SessionInfo{
+		FeishuChatID:     groupChatID,
+		ACPSessionID:     sessionID,
+		AgentName:        agentName,
+		Path:             path,
+		ToolCallIdToInfo: make(map[string]*session.ToolCallIdInfo),
+		Models:           models,
+		Modes:            modes,
+	}
+	if err := app.store.Set(groupChatID, &sessionInfo); err != nil {
+		log.Printf("Warning: failed to save session: %v", err)
+	}
+	agent.SetSessionChatID(&sessionInfo)
+	shareLinkResp, err := app.feishu.GetGroupShareLink(ctx, groupChatID)
+	if err != nil || !shareLinkResp.Success() || shareLinkResp.Data.ShareLink == nil {
+		log.Printf("Failed to get group share link: %v", err)
+		app.feishu.UpdateInteractiveCard(ctx, feishu.NewSessionFinishCard(agentName, path, "", "会话已恢复（获取分享链接失败）"), msgId)
+		return
+	}
+	app.feishu.UpdateInteractiveCard(ctx, feishu.NewSessionFinishCard(agentName, path, *shareLinkResp.Data.ShareLink, "会话已创建"), msgId)
+	app.feishu.SendOrUpdatePinCard(ctx, &sessionInfo)
 	app.store.Save()
 }
 
@@ -555,7 +799,7 @@ func (app *App) getOrRecoveryAgentBySessionInfo(ctx context.Context, info *sessi
 
 // restoreAgent restores an ACP client connection for a chat
 func (app *App) restoreAgent(ctx context.Context, info *session.SessionInfo) (*acp.Client, bool) {
-	agentConfig, ok := app.cfg.Agents[info.AgentName]
+	agentConfig, ok := app.cfg.FindAgentById(info.AgentName)
 	if !ok {
 		log.Printf("Agent config not found: %s", info.AgentName)
 		return nil, false
@@ -609,31 +853,8 @@ func (app *App) restoreAgent(ctx context.Context, info *session.SessionInfo) (*a
 
 	newAgent.SetSessionChatID(info)
 	app.agents[info.FeishuChatID] = newAgent
-	app.sendOrUpdatePinCard(ctx, info)
+	app.feishu.SendOrUpdatePinCard(ctx, info)
 	app.store.Save()
 	log.Printf("Agent connection restored for chat: %s", info.FeishuChatID)
 	return newAgent, true
-}
-
-func (app *App) sendOrUpdatePinCard(ctx context.Context, sessionInfo *session.SessionInfo) {
-	cardContent := feishu.GroupPinHeaderCard(sessionInfo.AgentName, sessionInfo.Path, sessionInfo.Models, sessionInfo.Modes)
-	if sessionInfo.PinCardMsgId != nil {
-		if err := app.feishu.UpdateInteractiveCard(ctx, cardContent, *sessionInfo.PinCardMsgId); err != nil {
-			log.Printf("Failed to update pin card: %v", err)
-		}
-	} else {
-		msgID, err := app.feishu.SendInteractiveCard(ctx, sessionInfo.FeishuChatID, cardContent)
-		if err != nil {
-			log.Printf("Failed to send pin card: %v", err)
-			return
-		}
-		sessionInfo.PinCardMsgId = msgID
-		if msgID != nil {
-			err := app.feishu.PinMessage(ctx, *msgID)
-			if err != nil {
-				log.Printf("Failed to pin message: %v", err)
-			}
-		}
-
-	}
 }
