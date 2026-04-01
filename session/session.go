@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -20,10 +22,8 @@ type PermissionResponse struct {
 
 // PendingPermission represents a waiting permission request
 type PendingPermission struct {
-	SessionID string
-	Options   []acpsdk.PermissionOption
+	ToolCard *components.ToolCallCard
 	Response  chan PermissionResponse
-	ToolCall  acpsdk.ToolCallUpdate
 }
 
 // PermissionManager manages pending permission requests
@@ -59,6 +59,13 @@ func (pm *PermissionManager) Remove(requestID string) {
 	pm.mu.Lock()
 	delete(pm.pending, requestID)
 	pm.mu.Unlock()
+}
+
+func (pm *PermissionManager) GetRequestID() string {
+	var randReqIdBytes [8]byte
+	rand.Read(randReqIdBytes[:])
+	requestID := hex.EncodeToString(randReqIdBytes[:])
+	return requestID
 }
 
 type SessionInfo struct {

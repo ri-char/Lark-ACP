@@ -36,7 +36,7 @@ type Client struct {
 // New creates a new ACP client by launching the agent command
 func New(config *config.AgentConfig, feishu *feishu.Client, permissionMgr *session.PermissionManager) (*Client, error) {
 	cmd := exec.Command(config.Cmd[0], config.Cmd[1:]...)
-	
+
 	cmd.Env = os.Environ()
 	for k, v := range config.Env {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
@@ -248,6 +248,7 @@ func (c *Client) WriteTextFile(ctx context.Context, p acpsdk.WriteTextFileReques
 
 // RequestPermission handles permission requests from the agent
 func (c *Client) RequestPermission(ctx context.Context, p acpsdk.RequestPermissionRequest) (acpsdk.RequestPermissionResponse, error) {
+	logger.Debug("RequestPermission from acp")
 	if len(p.Options) == 0 {
 		return acpsdk.RequestPermissionResponse{
 			Outcome: acpsdk.RequestPermissionOutcome{
@@ -266,12 +267,28 @@ func (c *Client) RequestPermission(ctx context.Context, p acpsdk.RequestPermissi
 		}, nil
 	}
 
-	// 生成 request ID
-	requestID := fmt.Sprintf("perm_%s", p.ToolCall.ToolCallId)
+	toolCallId := string(p.ToolCall.ToolCallId)
+	toolCallInfo, ok := sessionInfo.ToolCallIdToInfo[toolCallId]
+	if !ok {
+		toolCallInfo = components.NewToolCallCard()
+		sessionInfo.ToolCallIdToInfo[toolCallId] = toolCallInfo
+	}
+	toolCallInfo.UpdateByToolCallUpdate(&p.ToolCall)
+	toolCallInfo.Permission = p.Options
+	requestID := c.permissionMgr.GetRequestID()
+	toolCallInfo.PermissionRequestID = requestID
 
-	// 发送权限卡片
-	card := feishu.PermissionCard(string(p.SessionId), requestID, p.Options, p.ToolCall)
-	if _, err := c.feishu.SendInteractiveCard(ctx, sessionInfo.FeishuChatID, card); err != nil {
+	// 等待用户响应
+	pending := &session.PendingPermission{
+		ToolCard: toolCallInfo,
+		Response:  make(chan session.PermissionResponse, 1),
+	}
+	c.permissionMgr.Add(requestID, pending)
+	defer c.permissionMgr.Remove(requestID)
+
+	err := toolCallInfo.UpdateFeishu(ctx, c.feishu, sessionInfo.FeishuChatID)
+
+	if err != nil {
 		logger.Debugf("Failed to send permission card: %v", err)
 		return acpsdk.RequestPermissionResponse{
 			Outcome: acpsdk.RequestPermissionOutcome{
@@ -279,16 +296,6 @@ func (c *Client) RequestPermission(ctx context.Context, p acpsdk.RequestPermissi
 			},
 		}, nil
 	}
-
-	// 等待用户响应
-	pending := &session.PendingPermission{
-		SessionID: string(p.SessionId),
-		Options:   p.Options,
-		ToolCall:  p.ToolCall,
-		Response:  make(chan session.PermissionResponse, 1),
-	}
-	c.permissionMgr.Add(requestID, pending)
-	defer c.permissionMgr.Remove(requestID)
 
 	select {
 	case resp := <-pending.Response:
@@ -348,7 +355,7 @@ func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification
 
 	switch {
 	case u.AgentMessageChunk != nil:
-		logger.Debug("SessionUpdate from acp", "type", "AgentMessageChunk")
+		// logger.Debug("SessionUpdate from acp", "type", "AgentMessageChunk")
 		if u.AgentMessageChunk.Content.Text != nil {
 			content := u.AgentMessageChunk.Content.Text.Text
 			c.AddStreamingChunk(sessionInfo, "message", content)
@@ -361,7 +368,7 @@ func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification
 		}
 		c.updateToolCall(u.ToolCall, u.ToolCallUpdate, sessionInfo)
 	case u.AgentThoughtChunk != nil:
-		logger.Debug("SessionUpdate from acp", "type", "AgentThoughtChunk")
+		// logger.Debug("SessionUpdate from acp", "type", "AgentThoughtChunk")
 		if u.AgentThoughtChunk.Content.Text != nil {
 			content := u.AgentThoughtChunk.Content.Text.Text
 			c.AddStreamingChunk(sessionInfo, "thought", content)
