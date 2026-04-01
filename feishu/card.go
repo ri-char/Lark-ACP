@@ -10,7 +10,6 @@ import (
 	"github.com/coder/acp-go-sdk"
 	acpsdk "github.com/coder/acp-go-sdk"
 	larkcard "github.com/larksuite/oapi-sdk-go/v3/card"
-	"github.com/ri-char/lark-acp/session"
 )
 
 // PathInputCard creates a card for path input
@@ -342,7 +341,7 @@ func LoadSessionAgentSessionFreezeCard(agentId string) any {
 							"tag":      "select_static",
 							"name":     "session_id",
 							"disabled": true,
-							"width": "fill",
+							"width":    "fill",
 						},
 						{
 							"tag":  "button",
@@ -552,79 +551,6 @@ func NewSessionFinishCard(agentName, path, link, title string) string {
 	return string(data)
 }
 
-// ToolCallCard creates a card for displaying tool call status
-func ToolCallCard(info *session.ToolCallIdInfo) string {
-
-	// 状态颜色映射
-	var templateColor string
-	switch info.Status {
-	case acpsdk.ToolCallStatusInProgress:
-		templateColor = "blue"
-	case acpsdk.ToolCallStatusCompleted:
-		templateColor = "green"
-	case acpsdk.ToolCallStatusFailed:
-		templateColor = "red"
-	case acpsdk.ToolCallStatusPending:
-		templateColor = "grey"
-	default:
-		templateColor = "grey"
-	}
-
-	// 构建内容
-	var contentBuilder strings.Builder
-	if len(string(info.Kind)) > 0 {
-		contentBuilder.WriteString(fmt.Sprintf("**类型:** %s\n", string(info.Kind)))
-	}
-	// 显示文件路径
-	if len(info.Locations) > 0 {
-		contentBuilder.WriteString("**文件:**\n")
-		for _, loc := range info.Locations {
-			if loc.Line != nil {
-				contentBuilder.WriteString(fmt.Sprintf("- `%s:%d`\n", loc.Path, *loc.Line))
-			} else {
-				contentBuilder.WriteString(fmt.Sprintf("- `%s`\n", loc.Path))
-			}
-		}
-		contentBuilder.WriteString("\n")
-	}
-
-	// 显示内容（如果有 diff 或文本）
-	// if len(info.Content) > 0 {
-	// 	contentBuilder.WriteString("**内容:**\n")
-	// 	for _, c := range info.Content {
-	// 		if c.Diff != nil {
-	// 			contentBuilder.WriteString(fmt.Sprintf("```diff\n%s\n```\n", c.Diff.NewText))
-	// 		} else if c.Content != nil && c.Content.Content.Text != nil {
-	// 			contentBuilder.WriteString(fmt.Sprintf("%s\n", c.Content.Content.Text.Text))
-	// 		}
-	// 	}
-	// }
-
-	card := map[string]any{
-		"schema": "2.0",
-		"header": map[string]any{
-			"title": map[string]any{
-				"tag":     "plain_text",
-				"content": "🔧 " + info.Title,
-			},
-			"template": templateColor,
-		},
-		"body": map[string]any{
-			"elements": []map[string]any{
-				{
-					"tag": "div",
-					"text": map[string]any{
-						"tag":     "lark_md",
-						"content": contentBuilder.String(),
-					},
-				},
-			},
-		},
-	}
-	data, _ := json.Marshal(card)
-	return string(data)
-}
-
 // PlanCard creates a card for displaying plan entries
 func PlanCard(entries []acpsdk.PlanEntry) string {
 	// 构建任务列表
@@ -738,8 +664,7 @@ func PermissionCard(sessionID, requestID string, options []acpsdk.PermissionOpti
 		default:
 			buttonType = "default"
 		}
-
-		content = append(content, map[string]any{
+		btnCard := map[string]any{
 			"tag":  "button",
 			"name": "permission_" + requestID + "_0_" + string(opt.OptionId),
 			"text": map[string]any{
@@ -759,7 +684,25 @@ func PermissionCard(sessionID, requestID string, options []acpsdk.PermissionOpti
 					},
 				},
 			},
-		})
+		}
+		switch opt.Kind {
+		case acp.PermissionOptionKindRejectOnce:
+			btnCard["confirm"] = map[string]any{
+				"text": map[string]any{
+					"tag":     "plain_text",
+					"content": "确认本次拒绝执行吗？",
+				},
+			}
+		case acp.PermissionOptionKindRejectAlways:
+			btnCard["confirm"] = map[string]any{
+				"text": map[string]any{
+					"tag":     "plain_text",
+					"content": "确认永远拒绝执行吗？",
+				},
+			}
+		}
+
+		content = append(content, btnCard)
 	}
 	content = append(content, map[string]any{
 		"tag":  "button",
@@ -769,6 +712,12 @@ func PermissionCard(sessionID, requestID string, options []acpsdk.PermissionOpti
 			"content": "取消",
 		},
 		"type": "danger",
+		"confirm": map[string]any{
+			"text": map[string]any{
+				"tag":     "plain_text",
+				"content": "确认取消吗？",
+			},
+		},
 		"behaviors": []map[string]any{
 			{
 				"type": "callback",
@@ -913,45 +862,6 @@ func PermissionFreezeCard(options []acpsdk.PermissionOption, toolCall acpsdk.Too
 		},
 	}
 	return card
-}
-
-func StreamingCard(ty string, text string) string {
-	card := map[string]any{
-		"schema": "2.0",
-
-		"config": map[string]any{
-			"streaming_mode": true,
-		},
-		"body": map[string]any{
-			"elements": []map[string]any{
-				{
-					"tag":        "markdown",
-					"content":    text,
-					"element_id": "markdown_main",
-				},
-			},
-		},
-	}
-	if ty == "thought" {
-		card["header"] = map[string]any{
-			"title": map[string]any{
-				"tag":     "plain_text",
-				"content": "思考",
-			},
-			"template": "blue",
-		}
-	}
-	data, _ := json.Marshal(card)
-	return string(data)
-}
-func StreamingCardEndSetting() string {
-	card := map[string]any{
-		"config": map[string]any{
-			"streaming_mode": false,
-		},
-	}
-	data, _ := json.Marshal(card)
-	return string(data)
 }
 
 func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, modes *acpsdk.SessionModeState) string {

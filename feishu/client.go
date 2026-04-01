@@ -12,7 +12,6 @@ import (
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
 	larkcardkit "github.com/larksuite/oapi-sdk-go/v3/service/cardkit/v1"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
-	"github.com/ri-char/lark-acp/session"
 )
 
 type Client struct {
@@ -289,19 +288,18 @@ func (c *Client) PinMessage(ctx context.Context, msgId string) error {
 	return nil
 }
 
-func (c *Client) SendOrUpdatePinCard(ctx context.Context, sessionInfo *session.SessionInfo) {
-	cardContent := GroupPinHeaderCard(sessionInfo.AgentName, sessionInfo.Path, sessionInfo.Models, sessionInfo.Modes)
-	if sessionInfo.PinCardMsgId != nil {
-		if err := c.UpdateInteractiveCard(ctx, cardContent, *sessionInfo.PinCardMsgId); err != nil {
+func (c *Client) SendOrUpdatePinCard(ctx context.Context, cardContent, chatId string, cardId *string) {
+	if cardId != nil {
+		if err := c.UpdateInteractiveCard(ctx, cardContent, *cardId); err != nil {
 			logger.Debugf("Failed to update pin card: %v", err)
 		}
 	} else {
-		msgID, err := c.SendInteractiveCard(ctx, sessionInfo.FeishuChatID, cardContent)
+		msgID, err := c.SendInteractiveCard(ctx, chatId, cardContent)
 		if err != nil {
 			logger.Debugf("Failed to send pin card: %v", err)
 			return
 		}
-		sessionInfo.PinCardMsgId = msgID
+		cardId = msgID
 		if msgID != nil {
 			err := c.PinMessage(ctx, *msgID)
 			if err != nil {

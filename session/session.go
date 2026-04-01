@@ -1,17 +1,20 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
 
 	acpsdk "github.com/coder/acp-go-sdk"
+	"github.com/ri-char/lark-acp/feishu"
+	"github.com/ri-char/lark-acp/feishu/components"
 )
 
 // PermissionResponse represents user's response to a permission request
 type PermissionResponse struct {
-	OptionId acpsdk.PermissionOptionId
+	OptionId  acpsdk.PermissionOptionId
 	Cancelled bool
 }
 
@@ -25,8 +28,8 @@ type PendingPermission struct {
 
 // PermissionManager manages pending permission requests
 type PermissionManager struct {
-	mu          sync.RWMutex
-	pending     map[string]*PendingPermission // requestID -> pending permission
+	mu      sync.RWMutex
+	pending map[string]*PendingPermission // requestID -> pending permission
 }
 
 // NewPermissionManager creates a new permission manager
@@ -58,37 +61,28 @@ func (pm *PermissionManager) Remove(requestID string) {
 	pm.mu.Unlock()
 }
 
-type ToolCallIdInfo struct {
-	Content []acpsdk.ToolCallContent `json:"content,omitempty"`
-	Kind    acpsdk.ToolKind          `json:"kind,omitempty"`
-	Locations []acpsdk.ToolCallLocation `json:"locations,omitempty"`
-	Status    acpsdk.ToolCallStatus     `json:"status,omitempty"`
-	Title     string                    `json:"title"`
-	MsgId     *string                   `json:"msgId,omitempty"`
-}
-
 type SessionInfo struct {
-	Mu                sync.Mutex `json:"-"`
-	FeishuChatID      string `json:"feishu_chat_id"`
-	ACPSessionID      string `json:"acp_session_id"`
-	AgentName         string `json:"agent_name"`
-	Path              string `json:"path"`
-	ToolCallIdToInfo  map[string]*ToolCallIdInfo
-	PlanMsgId         *string `json:"plan_msg_id,omitempty"`
-	PinCardMsgId      *string `json:"pin_card_msg_id,omitempty"`
+	Mu               sync.Mutex `json:"-"`
+	FeishuChatID     string     `json:"feishu_chat_id"`
+	ACPSessionID     string     `json:"acp_session_id"`
+	AgentName        string     `json:"agent_name"`
+	Path             string     `json:"path"`
+	ToolCallIdToInfo map[string]*components.ToolCallCard
+	PlanMsgId        *string `json:"plan_msg_id,omitempty"`
+	PinCardMsgId     *string `json:"pin_card_msg_id,omitempty"`
 
-	LastModelId       string `json:"last_model_id,omitempty"`
-	LastModeId        string `json:"last_mode_id,omitempty"`
-	Models *acpsdk.SessionModelState
-	Modes *acpsdk.SessionModeState
+	LastModelId string `json:"last_model_id,omitempty"`
+	LastModeId  string `json:"last_mode_id,omitempty"`
+	Models      *acpsdk.SessionModelState
+	Modes       *acpsdk.SessionModeState
 
-	InStreaming		  bool   `json:"in_streaming"`
-	StreamingText     string `json:"streaming_text,omitempty"`
-	StreamingId       int `json:"streaming_id,omitempty"`
-	StreamingType    	string `json:"streaming_type,omitempty"`
-	StreamingCardId    string `json:"streaming_card_id,omitempty"`
+	StreamCard *components.StreamCard
 }
 
+func (sessionInfo *SessionInfo) UpdateInformationCard(ctx context.Context, client *feishu.Client) {
+	cardContent := feishu.GroupPinHeaderCard(sessionInfo.AgentName, sessionInfo.Path, sessionInfo.Models, sessionInfo.Modes)
+	client.SendOrUpdatePinCard(ctx, cardContent, sessionInfo.FeishuChatID, sessionInfo.PinCardMsgId)
+}
 
 type SessionStore struct {
 	mu       sync.RWMutex
@@ -119,7 +113,7 @@ func NewStore() (*SessionStore, error) {
 	}
 	for _, info := range store.Sessions {
 		if info.ToolCallIdToInfo == nil {
-			info.ToolCallIdToInfo = make(map[string]*ToolCallIdInfo)
+			info.ToolCallIdToInfo = make(map[string]*components.ToolCallCard)
 		}
 	}
 
@@ -180,7 +174,7 @@ func (s *SessionStore) Delete(chatID string) error {
 }
 
 func getSessionPath() string {
-	path, err:=os.UserConfigDir()
+	path, err := os.UserConfigDir()
 	if err != nil {
 		return "session.json"
 	}
