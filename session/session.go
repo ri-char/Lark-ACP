@@ -70,18 +70,26 @@ type SessionInfo struct {
 	ToolCallIdToInfo map[string]*components.ToolCallCard
 	PlanMsgId        *string `json:"plan_msg_id,omitempty"`
 	PinCardMsgId     *string `json:"pin_card_msg_id,omitempty"`
+	UsageMsgId       *string `json:"usage_msg_id,omitempty"`
+	Title            *string `json:"title,omitempty"`
 
 	LastModelId string `json:"last_model_id,omitempty"`
 	LastModeId  string `json:"last_mode_id,omitempty"`
 	Models      *acpsdk.SessionModelState
 	Modes       *acpsdk.SessionModeState
+	UsageUsed   int `json:"usage_used,omitempty"`
+	UsageSize   int `json:"usage_size,omitempty"`
 
 	StreamCard *components.StreamCard
 }
 
 func (sessionInfo *SessionInfo) UpdateInformationCard(ctx context.Context, client *feishu.Client) {
-	cardContent := feishu.GroupPinHeaderCard(sessionInfo.AgentName, sessionInfo.Path, sessionInfo.Models, sessionInfo.Modes)
-	client.SendOrUpdatePinCard(ctx, cardContent, sessionInfo.FeishuChatID, sessionInfo.PinCardMsgId)
+	cardContent := feishu.GroupPinHeaderCard(sessionInfo.AgentName, sessionInfo.Path, sessionInfo.Models, sessionInfo.Modes, sessionInfo.Title)
+	client.SendOrUpdatePinCard(ctx, cardContent, sessionInfo.FeishuChatID, &sessionInfo.PinCardMsgId)
+}
+func (sessionInfo *SessionInfo) UpdateUsage(ctx context.Context, client *feishu.Client) {
+	cardContent := feishu.UsageHeaderCard(sessionInfo.UsageUsed, sessionInfo.UsageSize)
+	client.SendOrUpdateTopNoticeCard(ctx, cardContent, sessionInfo.FeishuChatID, &sessionInfo.UsageMsgId)
 }
 
 type SessionStore struct {

@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/ri-char/lark-acp/feishu/components"
 	"github.com/ri-char/lark-acp/logger"
@@ -96,6 +97,7 @@ func main() {
 			websocketQuit <- struct{}{}
 		}
 	}()
+	go app.saveSessionsThread(ctx)
 
 	logger.Info("✨ Lark ACP is ready")
 
@@ -112,6 +114,21 @@ func main() {
 	cancel()
 	for _, agent := range app.agents {
 		agent.Close()
+	}
+}
+
+func (app *App) saveSessionsThread(ctx context.Context) {
+	timer := time.NewTimer(30 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <- timer.C:
+			logger.Info("Save session informations")
+			app.store.Save()
+
+		}
 	}
 }
 

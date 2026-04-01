@@ -386,7 +386,6 @@ func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification
 	case u.UserMessageChunk != nil:
 		logger.Debug("SessionUpdate from acp", "type", "UserMessageChunk")
 		// Skip user message chunks, we already know what user sent
-		return nil
 	case u.CurrentModeUpdate != nil:
 		logger.Debug("SessionUpdate from acp", "type", "CurrentModeUpdate")
 		sessionInfo.LastModeId = string(u.CurrentModeUpdate.CurrentModeId)
@@ -394,6 +393,25 @@ func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification
 			sessionInfo.Modes.CurrentModeId = acpsdk.SessionModeId(u.CurrentModeUpdate.CurrentModeId)
 		}
 		sessionInfo.UpdateInformationCard(ctx, c.feishu)
+	case u.UsageUpdate != nil:
+		logger.Debug("SessionUpdate from acp", "type", "UsageUpdate")
+		oldUsed := sessionInfo.UsageUsed
+		oldSize := sessionInfo.UsageSize
+		sessionInfo.UsageUsed = u.UsageUpdate.Used
+		sessionInfo.UsageSize = u.UsageUpdate.Size
+		if oldUsed != u.UsageUpdate.Used || oldSize != u.UsageUpdate.Size {
+			sessionInfo.UpdateUsage(ctx, c.feishu)
+		}
+	case u.SessionInfoUpdate != nil:
+		logger.Debug("SessionUpdate from acp", "type", "SessionInfoUpdate")
+		if u.SessionInfoUpdate.Title == nil {
+			break
+		}
+		oldTitle := sessionInfo.Title
+		sessionInfo.Title = u.SessionInfoUpdate.Title
+		if oldTitle == nil || *oldTitle != *u.SessionInfoUpdate.Title {
+			sessionInfo.UpdateInformationCard(ctx, c.feishu)
+		}
 	default:
 		logger.Debug("SessionUpdate from acp", "type", "unknown")
 

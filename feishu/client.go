@@ -114,14 +114,17 @@ func (c *Client) SendOrUpdateInteractiveCard(ctx context.Context, chatID, cardCo
 }
 
 func (c *Client) PutTopNotice(ctx context.Context, chatID, msgId string) error {
-	resp, err := c.client.Im.ChatTopNotice.PutTopNotice(ctx, larkim.NewPutTopNoticeChatTopNoticeReqBuilder().ChatId(chatID).Body(&larkim.PutTopNoticeChatTopNoticeReqBody{
-		ChatTopNotice: []*larkim.ChatTopNotice{
-			{
-				ActionType: larkcore.StringPtr("1"),
-				MessageId:  larkcore.StringPtr(msgId),
-			},
-		},
-	}).Build())
+	resp, err := c.client.Im.ChatTopNotice.PutTopNotice(ctx,
+		larkim.NewPutTopNoticeChatTopNoticeReqBuilder().
+			ChatId(chatID).
+			Body(&larkim.PutTopNoticeChatTopNoticeReqBody{
+				ChatTopNotice: []*larkim.ChatTopNotice{
+					{
+						ActionType: larkcore.StringPtr("1"),
+						MessageId:  larkcore.StringPtr(msgId),
+					},
+				},
+			}).Build())
 	if err != nil {
 		return fmt.Errorf("failed to PutTopNotice: %w", err)
 	}
@@ -288,24 +291,46 @@ func (c *Client) PinMessage(ctx context.Context, msgId string) error {
 	return nil
 }
 
-func (c *Client) SendOrUpdatePinCard(ctx context.Context, cardContent, chatId string, cardId *string) {
-	if cardId != nil {
-		if err := c.UpdateInteractiveCard(ctx, cardContent, *cardId); err != nil {
-			logger.Debugf("Failed to update pin card: %v", err)
+func (c *Client) SendOrUpdatePinCard(ctx context.Context, cardContent, chatId string, cardId **string) {
+	if *cardId != nil {
+		if err := c.UpdateInteractiveCard(ctx, cardContent, **cardId); err != nil {
+			logger.Warnf("Failed to update pin card: %v", err)
 		}
 	} else {
 		msgID, err := c.SendInteractiveCard(ctx, chatId, cardContent)
 		if err != nil {
-			logger.Debugf("Failed to send pin card: %v", err)
+			logger.Warnf("Failed to send pin card: %v", err)
 			return
 		}
-		cardId = msgID
+		*cardId = msgID
 		if msgID != nil {
 			err := c.PinMessage(ctx, *msgID)
 			if err != nil {
-				logger.Debugf("Failed to pin message: %v", err)
+				logger.Warnf("Failed to pin message: %v", err)
+			}
+		}
+	}
+}
+
+func (c *Client) SendOrUpdateTopNoticeCard(ctx context.Context, cardContent, chatId string, cardId **string) {
+	if *cardId != nil {
+		if err := c.UpdateInteractiveCard(ctx, cardContent, **cardId); err != nil {
+			logger.Warnf("Failed to update pin card: %v", err)
+		}
+	} else {
+		msgID, err := c.SendInteractiveCard(ctx, chatId, cardContent)
+		if err != nil {
+			logger.Warnf("Failed to send pin card: %v", err)
+			return
+		}
+		*cardId = msgID
+		if msgID != nil {
+			err := c.PutTopNotice(ctx, chatId,*msgID)
+			if err != nil {
+				logger.Warnf("Failed to pin message: %v", err)
 			}
 		}
 
 	}
 }
+

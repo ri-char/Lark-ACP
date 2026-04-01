@@ -864,41 +864,73 @@ func PermissionFreezeCard(options []acpsdk.PermissionOption, toolCall acpsdk.Too
 	return card
 }
 
-func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, modes *acpsdk.SessionModeState) string {
-
-	elements := []map[string]any{
-		{
-			"tag":                "column_set",
-			"horizontal_spacing": "8px",
-			"horizontal_align":   "left",
-			"columns": []map[string]any{
-				{
-					"tag":    "column",
-					"width":  "weighted",
-					"weight": 1,
-					"elements": []map[string]any{
-						{
-							"tag":        "markdown",
-							"content":    "**工作目录**",
-							"text_align": "left",
+func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, modes *acpsdk.SessionModeState, title *string) string {
+	var elements []map[string]any
+	if title != nil {
+		elements = append(elements,
+			map[string]any{
+				"tag":                "column_set",
+				"horizontal_spacing": "8px",
+				"horizontal_align":   "left",
+				"columns": []map[string]any{
+					{
+						"tag":    "column",
+						"width":  "weighted",
+						"weight": 1,
+						"elements": []map[string]any{
+							{
+								"tag":        "markdown",
+								"content":    "**名称**",
+								"text_align": "left",
+							},
+						},
+					},
+					{
+						"tag":    "column",
+						"width":  "weighted",
+						"weight": 3,
+						"elements": []map[string]any{
+							{
+								"tag":        "markdown",
+								"content":    title,
+								"text_align": "left",
+							},
 						},
 					},
 				},
-				{
-					"tag":    "column",
-					"width":  "weighted",
-					"weight": 3,
-					"elements": []map[string]any{
-						{
-							"tag":        "markdown",
-							"content":    path,
-							"text_align": "left",
-						},
+			})
+	}
+	elements = append(elements, map[string]any{
+		"tag":                "column_set",
+		"horizontal_spacing": "8px",
+		"horizontal_align":   "left",
+		"columns": []map[string]any{
+			{
+				"tag":    "column",
+				"width":  "weighted",
+				"weight": 1,
+				"elements": []map[string]any{
+					{
+						"tag":        "markdown",
+						"content":    "**工作目录**",
+						"text_align": "left",
+					},
+				},
+			},
+			{
+				"tag":    "column",
+				"width":  "weighted",
+				"weight": 3,
+				"elements": []map[string]any{
+					{
+						"tag":        "markdown",
+						"content":    path,
+						"text_align": "left",
 					},
 				},
 			},
 		},
-	}
+	})
 	// Build models info
 	if models != nil {
 		modelsInfo := string(models.CurrentModelId)
@@ -1108,6 +1140,32 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 		},
 		"body": map[string]any{
 			"elements": elements,
+		},
+	}
+	data, _ := json.Marshal(card)
+	return string(data)
+}
+
+func UsageHeaderCard(used, size int) string {
+	var sizeText string
+	if size >= 1000000 {
+		sizeText = fmt.Sprintf("%dM", size / 1000000)
+	} else if size >= 1000 {
+		sizeText = fmt.Sprintf("%dK", size / 1000)
+	} else {
+		sizeText = fmt.Sprintf("%d", size)
+	}
+	text := fmt.Sprintf("上下文已用%.1f%%，共计%s", float32(used)/float32(size)*100.0, sizeText)
+	card := map[string]any{
+		"schema": "2.0",
+		"body": map[string]any{
+			"elements": []map[string]any{
+				{
+					"tag":        "markdown",
+					"content":    text,
+					"element_id": "markdown_main",
+				},
+			},
 		},
 	}
 	data, _ := json.Marshal(card)
