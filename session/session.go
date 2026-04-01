@@ -180,9 +180,9 @@ func (s *SessionStore) Delete(chatID string) error {
 }
 
 func getSessionPath() string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "lark-acp", "session.json")
+	path, err:=os.UserConfigDir()
+	if err != nil {
+		return "session.json"
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "lark-acp", "session.json")
+	return filepath.Join(path, "lark-acp", "session.json")
 }

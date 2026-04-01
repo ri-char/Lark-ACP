@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/ri-char/lark-acp/logger"
 
 	"github.com/coder/acp-go-sdk"
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -63,7 +65,7 @@ func New(config *config.AgentConfig, feishu *feishu.Client, permissionMgr *sessi
 	}
 
 	c.conn = acpsdk.NewClientSideConnection(c, stdin, stdout)
-
+	c.conn.SetLogger(slog.Default().With("lib", "acp"))
 	return c, nil
 }
 
@@ -269,7 +271,7 @@ func (c *Client) RequestPermission(ctx context.Context, p acpsdk.RequestPermissi
 	// 发送权限卡片
 	card := feishu.PermissionCard(string(p.SessionId), requestID, p.Options, p.ToolCall)
 	if _, err := c.feishu.SendInteractiveCard(ctx, sessionInfo.FeishuChatID, card); err != nil {
-		log.Printf("Failed to send permission card: %v", err)
+		logger.Debugf("Failed to send permission card: %v", err)
 		return acpsdk.RequestPermissionResponse{
 			Outcome: acpsdk.RequestPermissionOutcome{
 				Cancelled: &acpsdk.RequestPermissionOutcomeCancelled{},
@@ -349,7 +351,7 @@ func (c *Client) updateToolCall(ToolCall *acpsdk.SessionUpdateToolCall, ToolCall
 	card := feishu.ToolCallCard(toolCallInfo)
 	msgIdPtr, err := c.feishu.SendOrUpdateInteractiveCard(context.Background(), sessionInfo.FeishuChatID, card, toolCallInfo.MsgId)
 	if err != nil {
-		log.Printf("Failed to send tool call card to Feishu: %v", err)
+		logger.Debugf("Failed to send tool call card to Feishu: %v", err)
 	}
 	if msgIdPtr != nil {
 		toolCallInfo.MsgId = msgIdPtr
@@ -361,7 +363,7 @@ func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification
 	u := n.Update
 	sessionInfo, ok := c.sessions[string(n.SessionId)]
 	if !ok {
-		log.Printf("Received session update for unknown session: %s", n.SessionId)
+		logger.Debugf("Received session update for unknown session: %s", n.SessionId)
 		return nil
 	}
 
@@ -387,7 +389,7 @@ func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification
 		card := feishu.PlanCard(u.Plan.Entries)
 		msgIdPtr, err := c.feishu.SendOrUpdateInteractiveCard(context.Background(), sessionInfo.FeishuChatID, card, sessionInfo.PlanMsgId)
 		if err != nil {
-			log.Printf("Failed to send plan card to Feishu: %v", err)
+			logger.Debugf("Failed to send plan card to Feishu: %v", err)
 		}
 		if sessionInfo.PlanMsgId == nil && msgIdPtr != nil {
 			c.feishu.PinMessage(ctx, *msgIdPtr)
@@ -427,23 +429,21 @@ func (c *Client) AddStreamingChunk(s *session.SessionInfo, kind string, text str
 	}
 
 	if !s.InStreaming {
-		log.Printf("Create new chunk: %s", text)
 		s.StreamingText += text
 		s.StreamingType = kind
 		card_id, err := c.feishu.CreateCard(context.Background(), feishu.StreamingCard(kind, s.StreamingText))
 		if err != nil {
-			log.Printf("Failed to create streaming card: %v", err)
+			logger.Debugf("Failed to create streaming card: %v", err)
 			return
 		}
 		_, err = c.feishu.SendInteractiveCardById(context.Background(), s.FeishuChatID, card_id)
 		if err != nil {
-			log.Printf("Failed to send streaming card: %v", err)
+			logger.Debugf("Failed to send streaming card: %v", err)
 			return
 		}
 		s.InStreaming = true
 		s.StreamingCardId = card_id
 	} else {
-		log.Printf("Add streaming chunk: %s", text)
 		s.StreamingText += text
 		s.StreamingId += 1
 		c.feishu.UpdateCardElement(context.Background(), s.StreamingCardId, "markdown_main", s.StreamingText, s.StreamingId)

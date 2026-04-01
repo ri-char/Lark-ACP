@@ -2,7 +2,7 @@ package acp
 
 import (
 	"io"
-	"log"
+	"github.com/ri-char/lark-acp/logger"
 )
 
 type TeeReader struct {
@@ -13,7 +13,7 @@ func NewTeeReader(r io.Reader) *TeeReader {
 }
 func (r *TeeReader) Read(p []byte) (n int, err error) {
 	n, err = r.r.Read(p)
-	log.Printf("=== Read: %v", string(p[:n]))
+	logger.Debugf("=== Read: %v", string(p[:n]))
 	return
 }
 
@@ -24,7 +24,7 @@ func NewTeeWriter(r io.Writer) *TeeWriter {
 	return &TeeWriter{r: r}
 }
 func (r *TeeWriter) Write(p []byte) (n int, err error) {
-	log.Printf("=== Write: %v", string(p))
+	logger.Debugf("=== Write: %v", string(p))
 	n, err = r.r.Write(p)
 	return
 }

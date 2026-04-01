@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
+
+	"github.com/ri-char/lark-acp/logger"
 
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
@@ -21,8 +23,7 @@ type Client struct {
 
 func New(appID, appSecret string) (*Client, error) {
 	cli := lark.NewClient(appID, appSecret,
-		lark.WithLogLevel(larkcore.LogLevelDebug),
-		lark.WithLogReqAtDebug(true),
+		lark.WithLogger(logger.NewLarkLogger(slog.LevelInfo)),
 	)
 	return &Client{
 		client:    cli,
@@ -292,19 +293,19 @@ func (c *Client) SendOrUpdatePinCard(ctx context.Context, sessionInfo *session.S
 	cardContent := GroupPinHeaderCard(sessionInfo.AgentName, sessionInfo.Path, sessionInfo.Models, sessionInfo.Modes)
 	if sessionInfo.PinCardMsgId != nil {
 		if err := c.UpdateInteractiveCard(ctx, cardContent, *sessionInfo.PinCardMsgId); err != nil {
-			log.Printf("Failed to update pin card: %v", err)
+			logger.Debugf("Failed to update pin card: %v", err)
 		}
 	} else {
 		msgID, err := c.SendInteractiveCard(ctx, sessionInfo.FeishuChatID, cardContent)
 		if err != nil {
-			log.Printf("Failed to send pin card: %v", err)
+			logger.Debugf("Failed to send pin card: %v", err)
 			return
 		}
 		sessionInfo.PinCardMsgId = msgID
 		if msgID != nil {
 			err := c.PinMessage(ctx, *msgID)
 			if err != nil {
-				log.Printf("Failed to pin message: %v", err)
+				logger.Debugf("Failed to pin message: %v", err)
 			}
 		}
 

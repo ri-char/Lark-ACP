@@ -18,7 +18,10 @@
 
 ## 配置
 
-配置文件位于 `$XDG_CONFIG_HOME/lark-acp/config.toml`：
+配置文件位于
+- Linux: `$XDG_CONFIG_HOME/lark-acp/config.toml`：
+- MacOS: `$HOME/Library/Application Support/lark-acp/config.toml`
+- Windows: `%APPDATA%\lark-acp\config.toml`
 
 ```toml
 feishu_app_id = "cli_xxxxxxxxxxxxxxxx"

@@ -21,26 +21,27 @@ type Config struct {
 
 func Load() (*Config, error) {
 	configPath := getConfigPath()
-
-	data, err := os.ReadFile(configPath)
+	file, err := os.Open(configPath)
+	if err != nil {
+		return nil, err
+	}
+	decoder := toml.NewDecoder(file).DisallowUnknownFields()
+	
+	var output Config
+	err = decoder.Decode(&output)
 	if err != nil {
 		return nil, err
 	}
 
-	var raw Config
-	if err := toml.Unmarshal(data, &raw); err != nil {
-		return nil, err
-	}
-
-	return &raw, nil
+	return &output, nil
 }
 
 func getConfigPath() string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "lark-acp", "config.toml")
+	path, err:=os.UserConfigDir()
+	if err != nil {
+		return "config.toml"
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "lark-acp", "config.toml")
+	return filepath.Join(path, "lark-acp", "config.toml")
 }
 
 func (c *Config) FindAgentById(id string) (agentCfg *AgentConfig, exist bool) {
