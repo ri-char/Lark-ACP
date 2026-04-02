@@ -14,11 +14,12 @@ type StreamCard struct {
 	chatId   string
 	cardId   *string
 	sequence int
+	cardIdMu     sync.Mutex // protect cardId and sequence
 	fullText string
 	CardType string
 
 	update chan bool  // signal to trigger API update
-	mu     sync.Mutex // protect fullText and cardId
+	mu     sync.Mutex // protect fullText
 	wg     sync.WaitGroup
 	ctx    context.Context
 }
@@ -88,6 +89,10 @@ func streamingCard(ty string, text string) string {
 func (s *StreamCard) doUpdate(ctx context.Context) {
 	s.mu.Lock()
 	text := s.fullText
+	s.mu.Unlock()
+	
+	s.cardIdMu.Lock()
+	defer s.cardIdMu.Unlock()
 	cardId := s.cardId
 
 	if cardId == nil {
@@ -96,13 +101,11 @@ func (s *StreamCard) doUpdate(ctx context.Context) {
 		newCardId, err := s.client.CreateCard(ctx, streamingCard(s.CardType, text))
 		if err != nil {
 			logger.Warn("Failed to create streaming card", "err", err)
-			s.mu.Unlock()
 			return
 		}
 		_, err = s.client.SendInteractiveCardById(ctx, s.chatId, newCardId)
 		if err != nil {
 			logger.Warn("Failed to send streaming card", "err", err)
-			s.mu.Unlock()
 			return
 		}
 		s.cardId = &newCardId
@@ -111,7 +114,6 @@ func (s *StreamCard) doUpdate(ctx context.Context) {
 	// Update existing card
 	s.sequence++
 	seq := s.sequence
-	s.mu.Unlock()
 	// logger.Debug("update card", "text", text, "seq", seq)
 	err := s.client.UpdateCardElement(ctx, *cardId, "markdown_main", text, seq)
 	if err != nil {

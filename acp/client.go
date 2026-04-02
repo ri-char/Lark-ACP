@@ -31,10 +31,11 @@ type Client struct {
 	permissionMgr *session.PermissionManager
 	terminals     *TerminalManager
 	Capabilities  []string
+	closed        bool
 }
 
 // New creates a new ACP client by launching the agent command
-func New(config *config.AgentConfig, feishu *feishu.Client, permissionMgr *session.PermissionManager) (*Client, error) {
+func New(config *config.AgentConfig, feishu *feishu.Client, permissionMgr *session.PermissionManager, maps *map[string]*Client) (*Client, error) {
 	cmd := exec.Command(config.Cmd[0], config.Cmd[1:]...)
 
 	cmd.Env = os.Environ()
@@ -67,6 +68,7 @@ func New(config *config.AgentConfig, feishu *feishu.Client, permissionMgr *sessi
 
 	c.conn = acpsdk.NewClientSideConnection(c, stdin, stdout)
 	c.conn.SetLogger(slog.Default().With("lib", "acp"))
+	go c.NoticeWhenDone(maps)
 	return c, nil
 }
 
@@ -191,6 +193,7 @@ func (c *Client) SetSessionChatID(session *session.SessionInfo) {
 
 // Close closes the ACP connection and stops the agent process
 func (c *Client) Close() error {
+	c.closed = true
 	if c.cmd != nil && c.cmd.Process != nil {
 		c.cmd.Process.Kill()
 		return c.cmd.Wait()
@@ -274,14 +277,14 @@ func (c *Client) RequestPermission(ctx context.Context, p acpsdk.RequestPermissi
 		sessionInfo.ToolCallIdToInfo[toolCallId] = toolCallInfo
 	}
 	toolCallInfo.UpdateByToolCallUpdate(&p.ToolCall)
-	toolCallInfo.Permission = p.Options
+	toolCallInfo.SetPermissionList(p.Options)
 	requestID := c.permissionMgr.GetRequestID()
-	toolCallInfo.PermissionRequestID = requestID
+	toolCallInfo.SetPermissionRequestID(requestID)
 
 	// 等待用户响应
 	pending := &session.PendingPermission{
 		ToolCard: toolCallInfo,
-		Response:  make(chan session.PermissionResponse, 1),
+		Response: make(chan session.PermissionResponse, 1),
 	}
 	c.permissionMgr.Add(requestID, pending)
 	defer c.permissionMgr.Remove(requestID)
@@ -435,6 +438,23 @@ func (c *Client) AddStreamingChunk(s *session.SessionInfo, kind string, text str
 		s.StreamCard = components.NewStreamableCard(context.Background(), c.feishu, s.FeishuChatID, kind)
 	}
 	s.StreamCard.WriteChunk(text)
+}
+
+func (c *Client) NoticeWhenDone(maps *map[string]*Client) {
+	_, ok := <-c.conn.Done()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !ok && !c.closed {
+		for _, sessionInfo := range c.sessions {
+			c.feishu.SendMessage(context.Background(), sessionInfo.FeishuChatID, "Agent异常退出")
+		}
+
+		for k, v := range *maps {
+			if v == c {
+				delete(*maps, k)
+			}
+		}
+	}
 }
 
 // Done returns a channel that closes when the connection is closed

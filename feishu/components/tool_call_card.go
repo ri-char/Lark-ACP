@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/coder/acp-go-sdk"
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -12,18 +13,21 @@ import (
 )
 
 type ToolCallCard struct {
-	Content             []acpsdk.ToolCallContent  `json:"content,omitempty"`
-	Kind                acpsdk.ToolKind           `json:"kind,omitempty"`
-	Locations           []acpsdk.ToolCallLocation `json:"locations,omitempty"`
-	Status              acpsdk.ToolCallStatus     `json:"status,omitempty"`
-	Title               string                    `json:"title"`
-	MsgId               *string                   `json:"msgId,omitempty"`
-	RawInput            any
-	Permission          []acpsdk.PermissionOption
-	PermissionSelected  *string
-	PermissionCancel    bool
-	PermissionRequestID string
-	ToolCallId          string
+	content             []acpsdk.ToolCallContent
+	kind                acpsdk.ToolKind
+	locations           []acpsdk.ToolCallLocation
+	status              acpsdk.ToolCallStatus
+	title               string
+	rawInput            any
+	permission          []acpsdk.PermissionOption
+	permissionSelected  *string
+	permissionCancel    bool
+	permissionRequestID string
+	toolCallId          string
+	infoMu              sync.RWMutex
+
+	msgId *string
+	msgMu sync.Mutex
 }
 
 func NewToolCallCard() *ToolCallCard {
@@ -31,64 +35,74 @@ func NewToolCallCard() *ToolCallCard {
 }
 
 func (c *ToolCallCard) UpdateBySessionUpdateToolCall(ToolCall *acpsdk.SessionUpdateToolCall) {
-	c.Content = ToolCall.Content
-	c.Locations = ToolCall.Locations
-	c.Title = ToolCall.Title
-	c.Status = ToolCall.Status
-	c.Kind = ToolCall.Kind
-	c.RawInput = ToolCall.RawInput
-	c.ToolCallId = string(ToolCall.ToolCallId)
+	c.infoMu.Lock()
+	defer c.infoMu.Unlock()
+	c.content = ToolCall.Content
+	c.locations = ToolCall.Locations
+	c.title = ToolCall.Title
+	c.status = ToolCall.Status
+	c.kind = ToolCall.Kind
+	c.rawInput = ToolCall.RawInput
+	c.toolCallId = string(ToolCall.ToolCallId)
 }
 
 func (c *ToolCallCard) UpdateBySessionToolCallUpdate(ToolCallUpdate *acpsdk.SessionToolCallUpdate) {
+	c.infoMu.Lock()
+	defer c.infoMu.Unlock()
 	if len(ToolCallUpdate.Content) > 0 {
-		c.Content = ToolCallUpdate.Content
+		c.content = ToolCallUpdate.Content
 	}
 	if ToolCallUpdate.Locations != nil {
-		c.Locations = ToolCallUpdate.Locations
+		c.locations = ToolCallUpdate.Locations
 	}
 	if ToolCallUpdate.Title != nil {
-		c.Title = *ToolCallUpdate.Title
+		c.title = *ToolCallUpdate.Title
 	}
 	if ToolCallUpdate.Status != nil {
-		c.Status = *ToolCallUpdate.Status
+		c.status = *ToolCallUpdate.Status
 	}
 	if ToolCallUpdate.Kind != nil {
-		c.Kind = *ToolCallUpdate.Kind
+		c.kind = *ToolCallUpdate.Kind
 	}
 	if ToolCallUpdate.RawInput != nil {
-		c.RawInput = ToolCallUpdate.RawInput
+		c.rawInput = ToolCallUpdate.RawInput
 	}
-	c.ToolCallId = string(ToolCallUpdate.ToolCallId)
+	c.toolCallId = string(ToolCallUpdate.ToolCallId)
 }
+
 func (c *ToolCallCard) UpdateByToolCallUpdate(ToolCallUpdate *acpsdk.ToolCallUpdate) {
+	c.infoMu.Lock()
+	defer c.infoMu.Unlock()
 	if len(ToolCallUpdate.Content) > 0 {
-		c.Content = ToolCallUpdate.Content
+		c.content = ToolCallUpdate.Content
 	}
 	if ToolCallUpdate.Locations != nil {
-		c.Locations = ToolCallUpdate.Locations
+		c.locations = ToolCallUpdate.Locations
 	}
 	if ToolCallUpdate.Title != nil {
-		c.Title = *ToolCallUpdate.Title
+		c.title = *ToolCallUpdate.Title
 	}
 	if ToolCallUpdate.Status != nil {
-		c.Status = *ToolCallUpdate.Status
+		c.status = *ToolCallUpdate.Status
 	}
 	if ToolCallUpdate.Kind != nil {
-		c.Kind = *ToolCallUpdate.Kind
+		c.kind = *ToolCallUpdate.Kind
 	}
 	if ToolCallUpdate.RawInput != nil {
-		c.RawInput = ToolCallUpdate.RawInput
+		c.rawInput = ToolCallUpdate.RawInput
 	}
-	c.ToolCallId = string(ToolCallUpdate.ToolCallId)
+	c.toolCallId = string(ToolCallUpdate.ToolCallId)
 }
+
 func (c *ToolCallCard) GetDescMarkdown() string {
+	c.infoMu.RLock()
+	defer c.infoMu.RUnlock()
 	var contentBuilder strings.Builder
 
 	printFileLocation := func() {
-		if len(c.Locations) > 0 {
+		if len(c.locations) > 0 {
 			contentBuilder.WriteString("**文件:**\n")
-			for _, loc := range c.Locations {
+			for _, loc := range c.locations {
 				if loc.Line != nil {
 					fmt.Fprintf(&contentBuilder, "- `%s:%d`\n", loc.Path, *loc.Line)
 				} else {
@@ -100,7 +114,7 @@ func (c *ToolCallCard) GetDescMarkdown() string {
 	}
 
 	contentBuilder.WriteString("**类型:** ")
-	switch c.Kind {
+	switch c.kind {
 	case acp.ToolKindRead:
 		contentBuilder.WriteString("读取文件\n")
 		printFileLocation()
@@ -126,11 +140,11 @@ func (c *ToolCallCard) GetDescMarkdown() string {
 	case acp.ToolKindOther:
 		contentBuilder.WriteString("其他操作\n")
 	default:
-		contentBuilder.WriteString(string(c.Kind))
+		contentBuilder.WriteString(string(c.kind))
 	}
 
-	if c.RawInput != nil {
-		data, err := json.MarshalIndent(c.RawInput, "", "  ")
+	if c.rawInput != nil {
+		data, err := json.MarshalIndent(c.rawInput, "", "  ")
 		if err == nil {
 			fmt.Fprintf(&contentBuilder, "**参数:**\n```\n%s\n```\n", data)
 		}
@@ -139,11 +153,12 @@ func (c *ToolCallCard) GetDescMarkdown() string {
 	return contentBuilder.String()
 }
 
-// ToolCallCard creates a card for displaying tool call status
 func (c *ToolCallCard) CetCardStructure() any {
+	c.infoMu.RLock()
+	defer c.infoMu.RUnlock()
 	// 状态颜色映射
 	var templateColor string
-	switch c.Status {
+	switch c.status {
 	case acpsdk.ToolCallStatusInProgress:
 		templateColor = "blue"
 	case acpsdk.ToolCallStatusCompleted:
@@ -165,14 +180,14 @@ func (c *ToolCallCard) CetCardStructure() any {
 			},
 		},
 	}
-	title := "🔧 " + c.Title
+	title := "🔧 " + c.title
 
-	if len(c.Permission) > 0 {
-		if c.PermissionSelected == nil && !c.PermissionCancel {
+	if len(c.permission) > 0 {
+		if c.permissionSelected == nil && !c.permissionCancel {
 			title = "🔐 权限请求"
 			templateColor = "grey"
-			if len(c.Title) > 0 {
-				title = "🔐 权限请求: " + c.Title
+			if len(c.title) > 0 {
+				title = "🔐 权限请求: " + c.title
 			}
 			content = append(content, map[string]any{
 				"tag": "div",
@@ -181,7 +196,7 @@ func (c *ToolCallCard) CetCardStructure() any {
 					"content": "**请选择操作：**",
 				},
 			})
-			for _, opt := range c.Permission {
+			for _, opt := range c.permission {
 				// 根据类型选择按钮样式
 				var buttonType string
 				switch opt.Kind {
@@ -192,7 +207,7 @@ func (c *ToolCallCard) CetCardStructure() any {
 				}
 				btnCard := map[string]any{
 					"tag":  "button",
-					"name": "permission_" + c.PermissionRequestID + "_0_" + string(opt.OptionId),
+					"name": "permission_" + c.permissionRequestID + "_0_" + string(opt.OptionId),
 					"text": map[string]any{
 						"tag":     "plain_text",
 						"content": opt.Name,
@@ -203,7 +218,7 @@ func (c *ToolCallCard) CetCardStructure() any {
 							"type": "callback",
 							"value": map[string]any{
 								"action":     "permission",
-								"request_id": c.PermissionRequestID,
+								"request_id": c.permissionRequestID,
 								"option_id":  string(opt.OptionId),
 								"cancel":     false,
 							},
@@ -231,7 +246,7 @@ func (c *ToolCallCard) CetCardStructure() any {
 			}
 			content = append(content, map[string]any{
 				"tag":  "button",
-				"name": "permission_" + c.PermissionRequestID + "_1_cancel",
+				"name": "permission_" + c.permissionRequestID + "_1_cancel",
 				"text": map[string]any{
 					"tag":     "plain_text",
 					"content": "取消",
@@ -248,15 +263,15 @@ func (c *ToolCallCard) CetCardStructure() any {
 						"type": "callback",
 						"value": map[string]any{
 							"action":     "permission",
-							"request_id": c.PermissionRequestID,
+							"request_id": c.permissionRequestID,
 							"cancel":     true,
 						},
 					},
 				},
 			})
-		} else if c.PermissionSelected != nil {
-			for _, opt := range c.Permission {
-				if string(opt.OptionId) != *c.PermissionSelected {
+		} else if c.permissionSelected != nil {
+			for _, opt := range c.permission {
+				if string(opt.OptionId) != *c.permissionSelected {
 					continue
 				}
 				if opt.Kind != acpsdk.PermissionOptionKindAllowOnce && opt.Kind != acpsdk.PermissionOptionKindAllowAlways {
@@ -274,7 +289,7 @@ func (c *ToolCallCard) CetCardStructure() any {
 				})
 				break
 			}
-		} else if c.PermissionCancel {
+		} else if c.permissionCancel {
 			title += " (已取消)"
 			content = append(content, map[string]any{
 				"tag":  "button",
@@ -308,12 +323,39 @@ func (c *ToolCallCard) CetCardStructure() any {
 func (c *ToolCallCard) UpdateFeishu(ctx context.Context, client *feishu.Client, chatId string) error {
 	cardByte, _ := json.Marshal(c.CetCardStructure())
 	card := string(cardByte)
-	msgIdPtr, err := client.SendOrUpdateInteractiveCard(context.Background(), chatId, card, c.MsgId)
+
+	c.msgMu.Lock()
+	defer c.msgMu.Unlock()
+	msgIdPtr, err := client.SendOrUpdateInteractiveCard(context.Background(), chatId, card, c.msgId)
 	if err != nil {
 		return err
 	}
 	if msgIdPtr != nil {
-		c.MsgId = msgIdPtr
+		c.msgId = msgIdPtr
 	}
 	return nil
+}
+
+func (c *ToolCallCard) SelectPermission(optionId string) {
+	c.infoMu.Lock()
+	defer c.infoMu.Unlock()
+	c.permissionSelected = &optionId
+}
+
+func (c *ToolCallCard) CancelPermission() {
+	c.infoMu.Lock()
+	defer c.infoMu.Unlock()
+	c.permissionCancel = true
+}
+
+func (c* ToolCallCard) SetPermissionRequestID(requestId string) {
+	c.infoMu.Lock()
+	defer c.infoMu.Unlock()
+	c.permissionRequestID = requestId
+}
+
+func (c* ToolCallCard) SetPermissionList(options []acpsdk.PermissionOption) {
+	c.infoMu.Lock()
+	defer c.infoMu.Unlock()
+	c.permission = options
 }

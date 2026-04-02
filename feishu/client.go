@@ -16,19 +16,15 @@ import (
 
 type Client struct {
 	client    *lark.Client
-	appID     string
-	appSecret string
 }
 
-func New(appID, appSecret string) (*Client, error) {
+func New(appID, appSecret string) *Client {
 	cli := lark.NewClient(appID, appSecret,
 		lark.WithLogger(logger.NewLarkLogger(slog.LevelInfo)),
 	)
 	return &Client{
 		client:    cli,
-		appID:     appID,
-		appSecret: appSecret,
-	}, nil
+	}
 }
 
 // SendMessage sends a text message to a chat
@@ -334,3 +330,30 @@ func (c *Client) SendOrUpdateTopNoticeCard(ctx context.Context, cardContent, cha
 	}
 }
 
+// SendPrivateMessage sends a private message to a user
+func (c *Client) SendPrivateMessage(ctx context.Context, openID, content, msgType string) error {
+	req := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType(larkim.ReceiveIdTypeOpenId).
+		Body(&larkim.CreateMessageReqBody{
+			ReceiveId:   larkcore.StringPtr(openID),
+			MsgType:     larkcore.StringPtr(msgType),
+			Content:     larkcore.StringPtr(content),
+		}).
+		Build()
+
+	resp, err := c.client.Im.Message.Create(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to send private message: %w", err)
+	}
+
+	if !resp.Success() {
+		return fmt.Errorf("failed to send private message: code=%d, msg=%s", resp.Code, resp.Msg)
+	}
+
+	return nil
+}
+
+// SendInteractiveCardToUser sends an interactive card to a user's private chat
+func (c *Client) SendInteractiveCardToUser(ctx context.Context, openID, cardContent string) error {
+	return c.SendPrivateMessage(ctx, openID, cardContent, "interactive")
+}

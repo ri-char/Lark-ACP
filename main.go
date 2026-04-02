@@ -32,7 +32,6 @@ type App struct {
 	store         *session.SessionStore
 	feishu        *feishu.Client
 	agents        map[string]*acp.Client // chatID -> ACP client
-	sessionToChat map[string]string      // sessionID -> chatID
 	permissionMgr *session.PermissionManager
 }
 
@@ -54,21 +53,15 @@ func main() {
 	logger.Info("✅ Session store loaded")
 
 	// Initialize Feishu client for API calls
-	fs, err := feishu.New(cfg.FeishuAppID, cfg.FeishuAppSecret)
-	if err != nil {
-		logger.Fatalf("Failed to create Feishu client: %v", err)
-	}
-	logger.Info("✅ Feishu client initialized")
+	fs := feishu.New(cfg.FeishuAppID, cfg.FeishuAppSecret)
 
 	app := &App{
 		cfg:           cfg,
 		store:         store,
 		feishu:        fs,
 		agents:        make(map[string]*acp.Client),
-		sessionToChat: make(map[string]string),
 		permissionMgr: session.NewPermissionManager(),
 	}
-	logger.Info("📦 Event handlers registered")
 
 	// Create event dispatcher for WebSocket events
 	eventHandler := dispatcher.NewEventDispatcher("", "").
@@ -91,15 +84,13 @@ func main() {
 	// Start WebSocket client in goroutine
 	websocketQuit := make(chan struct{}, 1)
 	go func() {
-		logger.Info("📡 WebSocket client started")
+		logger.Info("📡 WebSocket client is starting")
 		if err := cli.Start(ctx); err != nil {
 			logger.Warnf("WebSocket client stopped: %v", err)
 			websocketQuit <- struct{}{}
 		}
 	}()
 	go app.saveSessionsThread(ctx)
-
-	logger.Info("✨ Lark ACP is ready")
 
 	// Wait for shutdown signal
 	quit := make(chan os.Signal, 1)
@@ -165,8 +156,6 @@ func (app *App) handleChatDisband(ctx context.Context, event *larkim.P2ChatDisba
 			agent.Close()
 		}
 	}
-	// 删除 session信息
-	delete(app.sessionToChat, sessionInfo.ACPSessionID)
 	if err := app.store.Delete(chatId); err != nil {
 		logger.Warnf("Failed to delete session info for chat: %s, error: %v", chatId, err)
 	} else {
@@ -419,7 +408,7 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 			}, nil
 		}
 		if cancel {
-			pending.ToolCard.PermissionCancel = true
+			pending.ToolCard.CancelPermission()
 			pending.Response <- session.PermissionResponse{
 				Cancelled: true,
 			}
@@ -434,7 +423,7 @@ func (app *App) handleCardActionTrigger(ctx context.Context, event *callback.Car
 				},
 			}, nil
 		} else {
-			pending.ToolCard.PermissionSelected = &optionID
+			pending.ToolCard.SelectPermission(optionID)
 			pending.Response <- session.PermissionResponse{
 				OptionId: acpsdk.PermissionOptionId(optionID),
 			}
@@ -529,7 +518,7 @@ func (app *App) handleLoadSessionStage1(ctx context.Context, msgId, agentName st
 		return
 	}
 
-	agent, err := acp.New(agentCfg, app.feishu, app.permissionMgr)
+	agent, err := acp.New(agentCfg, app.feishu, app.permissionMgr, &app.agents)
 	if err != nil {
 		logger.Warnf("Failed to start ACP: %v", err)
 		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("Agent启动失败：%v", err)), msgId)
@@ -590,7 +579,7 @@ func (app *App) handleLoadSessionStage2(ctx context.Context, openID, msgId, agen
 		return
 	}
 
-	agent, err := acp.New(agentCfg, app.feishu, app.permissionMgr)
+	agent, err := acp.New(agentCfg, app.feishu, app.permissionMgr, &app.agents)
 	if err != nil {
 		logger.Warnf("Failed to start ACP: %v", err)
 		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("加载会话失败", fmt.Sprintf("Agent启动失败：%v", err)), msgId)
@@ -642,7 +631,6 @@ func (app *App) handleLoadSessionStage2(ctx context.Context, openID, msgId, agen
 	}
 
 	app.agents[groupChatID] = agent
-	app.sessionToChat[sessionID] = groupChatID
 	sessionInfo := session.SessionInfo{
 		FeishuChatID:     groupChatID,
 		ACPSessionID:     sessionID,
@@ -719,7 +707,7 @@ func (app *App) createSession(openID, agentName, path, msgId string) {
 		return
 	}
 
-	agent, err := acp.New(agentCfg, app.feishu, app.permissionMgr)
+	agent, err := acp.New(agentCfg, app.feishu, app.permissionMgr, &app.agents)
 	if err != nil {
 		logger.Warnf("Failed to start ACP: %v", err)
 		app.feishu.UpdateInteractiveCard(ctx, feishu.ErrorCard("创建会话失败", fmt.Sprintf("启动Agent失败: %v", err)), msgId)
@@ -750,7 +738,6 @@ func (app *App) createSession(openID, agentName, path, msgId string) {
 	}
 
 	app.agents[groupChatID] = agent
-	app.sessionToChat[sessionID] = groupChatID
 	sessionInfo := session.SessionInfo{
 		FeishuChatID:     groupChatID,
 		ACPSessionID:     sessionID,
@@ -824,7 +811,7 @@ func (app *App) restoreAgent(ctx context.Context, info *session.SessionInfo) (*a
 		return nil, false
 	}
 
-	newAgent, err := acp.New(agentConfig, app.feishu, app.permissionMgr)
+	newAgent, err := acp.New(agentConfig, app.feishu, app.permissionMgr, &app.agents)
 	if err != nil {
 		logger.Warnf("Failed to create ACP client: %v", err)
 		return nil, false
