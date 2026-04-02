@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ri-char/lark-acp/feishu/components"
 	"github.com/ri-char/lark-acp/logger"
 
 	"github.com/coder/acp-go-sdk"
@@ -23,19 +22,17 @@ import (
 
 // Client implements the acp.Client interface and handles ACP communication
 type Client struct {
-	cmd           *exec.Cmd
-	conn          *acpsdk.ClientSideConnection
-	mu            sync.Mutex
-	sessions      map[string]*session.SessionInfo // sessionID -> chatID mapping for callbacks
-	feishu        *feishu.Client
-	permissionMgr *session.PermissionManager
-	terminals     *TerminalManager
-	Capabilities  []string
-	closed        bool
+	cmd          *exec.Cmd
+	conn         *acpsdk.ClientSideConnection
+	mu           sync.Mutex
+	sessions     map[string]*session.Session // sessionID -> chatID mapping for callbacks
+	terminals    *TerminalManager
+	Capabilities []string
+	closed       bool
 }
 
 // New creates a new ACP client by launching the agent command
-func New(config *config.AgentConfig, feishu *feishu.Client, permissionMgr *session.PermissionManager, maps *map[string]*Client) (*Client, error) {
+func New(config *config.AgentConfig, maps *map[string]*Client) (*Client, error) {
 	cmd := exec.Command(config.Cmd[0], config.Cmd[1:]...)
 
 	cmd.Env = os.Environ()
@@ -59,11 +56,9 @@ func New(config *config.AgentConfig, feishu *feishu.Client, permissionMgr *sessi
 	}
 
 	c := &Client{
-		cmd:           cmd,
-		sessions:      make(map[string]*session.SessionInfo),
-		feishu:        feishu,
-		permissionMgr: permissionMgr,
-		terminals:     NewTerminalManager(),
+		cmd:       cmd,
+		sessions:  make(map[string]*session.Session),
+		terminals: NewTerminalManager(),
 	}
 
 	c.conn = acpsdk.NewClientSideConnection(c, stdin, stdout)
@@ -185,7 +180,7 @@ func (c *Client) ListSessions(ctx context.Context) ([]acp.UnstableSessionInfo, e
 }
 
 // SetSessionChatID associates a session with a Feishu chat ID for callbacks
-func (c *Client) SetSessionChatID(session *session.SessionInfo) {
+func (c *Client) SetSessionChatID(session *session.Session) {
 	c.mu.Lock()
 	c.sessions[session.ACPSessionID] = session
 	c.mu.Unlock()
@@ -271,14 +266,10 @@ func (c *Client) RequestPermission(ctx context.Context, p acpsdk.RequestPermissi
 	}
 
 	toolCallId := string(p.ToolCall.ToolCallId)
-	toolCallInfo, ok := sessionInfo.ToolCallIdToInfo[toolCallId]
-	if !ok {
-		toolCallInfo = components.NewToolCallCard()
-		sessionInfo.ToolCallIdToInfo[toolCallId] = toolCallInfo
-	}
+	toolCallInfo := sessionInfo.GetOrInitToolcall(toolCallId)
 	toolCallInfo.UpdateByToolCallUpdate(&p.ToolCall)
 	toolCallInfo.SetPermissionList(p.Options)
-	requestID := c.permissionMgr.GetRequestID()
+	requestID := session.GetPermissionManager().GetRequestID()
 	toolCallInfo.SetPermissionRequestID(requestID)
 
 	// 等待用户响应
@@ -286,10 +277,10 @@ func (c *Client) RequestPermission(ctx context.Context, p acpsdk.RequestPermissi
 		ToolCard: toolCallInfo,
 		Response: make(chan session.PermissionResponse, 1),
 	}
-	c.permissionMgr.Add(requestID, pending)
-	defer c.permissionMgr.Remove(requestID)
+	session.GetPermissionManager().Add(requestID, pending)
+	defer session.GetPermissionManager().Remove(requestID)
 
-	err := toolCallInfo.UpdateFeishu(ctx, c.feishu, sessionInfo.FeishuChatID)
+	err := toolCallInfo.UpdateFeishu(ctx, sessionInfo.FeishuChatID)
 
 	if err != nil {
 		logger.Debugf("Failed to send permission card: %v", err)
@@ -323,121 +314,80 @@ func (c *Client) RequestPermission(ctx context.Context, p acpsdk.RequestPermissi
 	}
 }
 
-func (c *Client) updateToolCall(ToolCall *acpsdk.SessionUpdateToolCall, ToolCallUpdate *acpsdk.SessionToolCallUpdate, sessionInfo *session.SessionInfo) {
+func (c *Client) updateToolCall(ToolCall *acpsdk.SessionUpdateToolCall, ToolCallUpdate *acpsdk.SessionToolCallUpdate, sessionInfo *session.Session) {
 	var toolCallId string
 	if ToolCall != nil {
 		toolCallId = string(ToolCall.ToolCallId)
 	} else if ToolCallUpdate != nil {
 		toolCallId = string(ToolCallUpdate.ToolCallId)
 	}
-	toolCallInfo, ok := sessionInfo.ToolCallIdToInfo[toolCallId]
-	if !ok {
-		toolCallInfo = components.NewToolCallCard()
-		sessionInfo.ToolCallIdToInfo[string(ToolCall.ToolCallId)] = toolCallInfo
-	}
+	toolCallInfo := sessionInfo.GetOrInitToolcall(toolCallId)
 	if ToolCall != nil {
 		toolCallInfo.UpdateBySessionUpdateToolCall(ToolCall)
 	}
 	if ToolCallUpdate != nil {
 		toolCallInfo.UpdateBySessionToolCallUpdate(ToolCallUpdate)
 	}
-	toolCallInfo.UpdateFeishu(context.Background(), c.feishu, sessionInfo.FeishuChatID)
+	toolCallInfo.UpdateFeishu(context.Background(), sessionInfo.FeishuChatID)
 }
 
 // SessionUpdate handles session update notifications from the agent
 func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification) error {
 	u := n.Update
-	sessionInfo, ok := c.sessions[string(n.SessionId)]
+	session, ok := c.sessions[string(n.SessionId)]
 	if !ok {
 		logger.Debugf("Received session update for unknown session: %s", n.SessionId)
 		return nil
 	}
 
-	sessionInfo.Mu.Lock()
-	defer sessionInfo.Mu.Unlock()
+	session.Mu.Lock()
+	defer session.Mu.Unlock()
 
 	switch {
 	case u.AgentMessageChunk != nil:
 		// logger.Debug("SessionUpdate from acp", "type", "AgentMessageChunk")
 		if u.AgentMessageChunk.Content.Text != nil {
 			content := u.AgentMessageChunk.Content.Text.Text
-			c.AddStreamingChunk(sessionInfo, "message", content)
+			session.AddStreamingChunk("message", content)
 		}
 	case u.ToolCall != nil || u.ToolCallUpdate != nil:
 		logger.Debug("SessionUpdate from acp", "type", "ToolCall/ToolCallUpdate")
-		if sessionInfo.StreamCard != nil {
-			sessionInfo.StreamCard.Close()
-			sessionInfo.StreamCard = nil
-		}
-		c.updateToolCall(u.ToolCall, u.ToolCallUpdate, sessionInfo)
+		session.CloseStreamCard()
+		c.updateToolCall(u.ToolCall, u.ToolCallUpdate, session)
 	case u.AgentThoughtChunk != nil:
 		// logger.Debug("SessionUpdate from acp", "type", "AgentThoughtChunk")
 		if u.AgentThoughtChunk.Content.Text != nil {
 			content := u.AgentThoughtChunk.Content.Text.Text
-			c.AddStreamingChunk(sessionInfo, "thought", content)
+			session.AddStreamingChunk("thought", content)
 		}
 	case u.Plan != nil:
 		logger.Debug("SessionUpdate from acp", "type", "Plan")
-		if sessionInfo.StreamCard != nil {
-			sessionInfo.StreamCard.Close()
-			sessionInfo.StreamCard = nil
-		}
-		card := feishu.PlanCard(u.Plan.Entries)
-		msgIdPtr, err := c.feishu.SendOrUpdateInteractiveCard(context.Background(), sessionInfo.FeishuChatID, card, sessionInfo.PlanMsgId)
-		if err != nil {
-			logger.Debugf("Failed to send plan card to Feishu: %v", err)
-		}
-		if sessionInfo.PlanMsgId == nil && msgIdPtr != nil {
-			c.feishu.PinMessage(ctx, *msgIdPtr)
-		}
-		if msgIdPtr != nil {
-			sessionInfo.PlanMsgId = msgIdPtr
-		}
+		session.CloseStreamCard()
+		session.UpdatePlanToFeishu(ctx, u.Plan.Entries)
 	case u.UserMessageChunk != nil:
 		logger.Debug("SessionUpdate from acp", "type", "UserMessageChunk")
 		// Skip user message chunks, we already know what user sent
 	case u.CurrentModeUpdate != nil:
 		logger.Debug("SessionUpdate from acp", "type", "CurrentModeUpdate")
-		sessionInfo.LastModeId = string(u.CurrentModeUpdate.CurrentModeId)
-		if sessionInfo.Modes != nil {
-			sessionInfo.Modes.CurrentModeId = acpsdk.SessionModeId(u.CurrentModeUpdate.CurrentModeId)
-		}
-		sessionInfo.UpdateInformationCard(ctx, c.feishu)
+		session.SetMode(string(u.CurrentModeUpdate.CurrentModeId))
+		session.UpdateInformationCardToFeishu(ctx)
 	case u.UsageUpdate != nil:
 		logger.Debug("SessionUpdate from acp", "type", "UsageUpdate")
-		oldUsed := sessionInfo.UsageUsed
-		oldSize := sessionInfo.UsageSize
-		sessionInfo.UsageUsed = u.UsageUpdate.Used
-		sessionInfo.UsageSize = u.UsageUpdate.Size
-		if oldUsed != u.UsageUpdate.Used || oldSize != u.UsageUpdate.Size {
-			sessionInfo.UpdateUsage(ctx, c.feishu)
-		}
+		session.UpdateUsageToFeishu(ctx, u.UsageUpdate.Used, u.UsageUpdate.Size)
 	case u.SessionInfoUpdate != nil:
 		logger.Debug("SessionUpdate from acp", "type", "SessionInfoUpdate")
 		if u.SessionInfoUpdate.Title == nil {
 			break
 		}
-		oldTitle := sessionInfo.Title
-		sessionInfo.Title = u.SessionInfoUpdate.Title
+		oldTitle := session.GetTitle()
+		session.SetTitle(u.SessionInfoUpdate.Title)
 		if oldTitle == nil || *oldTitle != *u.SessionInfoUpdate.Title {
-			sessionInfo.UpdateInformationCard(ctx, c.feishu)
+			session.UpdateInformationCardToFeishu(ctx)
 		}
 	default:
 		logger.Debug("SessionUpdate from acp", "type", "unknown")
-
 	}
-
 	return nil
-}
-
-func (c *Client) AddStreamingChunk(s *session.SessionInfo, kind string, text string) {
-	if s.StreamCard == nil {
-		s.StreamCard = components.NewStreamableCard(context.Background(), c.feishu, s.FeishuChatID, kind)
-	} else if s.StreamCard.CardType != kind {
-		go s.StreamCard.Close()
-		s.StreamCard = components.NewStreamableCard(context.Background(), c.feishu, s.FeishuChatID, kind)
-	}
-	s.StreamCard.WriteChunk(text)
 }
 
 func (c *Client) NoticeWhenDone(maps *map[string]*Client) {
@@ -446,7 +396,7 @@ func (c *Client) NoticeWhenDone(maps *map[string]*Client) {
 	defer c.mu.Unlock()
 	if !ok && !c.closed {
 		for _, sessionInfo := range c.sessions {
-			c.feishu.SendMessage(context.Background(), sessionInfo.FeishuChatID, "Agent异常退出")
+			feishu.SendMessage(context.Background(), sessionInfo.FeishuChatID, "Agent异常退出")
 		}
 
 		for k, v := range *maps {

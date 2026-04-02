@@ -320,13 +320,13 @@ func (c *ToolCallCard) CetCardStructure() any {
 	return card
 }
 
-func (c *ToolCallCard) UpdateFeishu(ctx context.Context, client *feishu.Client, chatId string) error {
+func (c *ToolCallCard) UpdateFeishu(ctx context.Context, chatId string) error {
 	cardByte, _ := json.Marshal(c.CetCardStructure())
 	card := string(cardByte)
 
 	c.msgMu.Lock()
 	defer c.msgMu.Unlock()
-	msgIdPtr, err := client.SendOrUpdateInteractiveCard(context.Background(), chatId, card, c.msgId)
+	msgIdPtr, err := feishu.SendOrUpdateInteractiveCard(context.Background(), chatId, card, c.msgId)
 	if err != nil {
 		return err
 	}

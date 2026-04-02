@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/coder/acp-go-sdk"
-	acpsdk "github.com/coder/acp-go-sdk"
 	larkcard "github.com/larksuite/oapi-sdk-go/v3/card"
 )
 
@@ -552,7 +551,7 @@ func NewSessionFinishCard(agentName, path, link, title string) string {
 }
 
 // PlanCard creates a card for displaying plan entries
-func PlanCard(entries []acpsdk.PlanEntry) string {
+func PlanCard(entries []acp.PlanEntry) string {
 	// 构建任务列表
 	var content strings.Builder
 
@@ -560,9 +559,9 @@ func PlanCard(entries []acpsdk.PlanEntry) string {
 		// 状态图标
 		var statusIcon string
 		switch entry.Status {
-		case acpsdk.PlanEntryStatusInProgress:
+		case acp.PlanEntryStatusInProgress:
 			statusIcon = "🔄"
-		case acpsdk.PlanEntryStatusCompleted:
+		case acp.PlanEntryStatusCompleted:
 			statusIcon = "✅"
 		default:
 			statusIcon = "⏳"
@@ -571,9 +570,9 @@ func PlanCard(entries []acpsdk.PlanEntry) string {
 		// 优先级颜色
 		var priorityColor string
 		switch entry.Priority {
-		case acpsdk.PlanEntryPriorityHigh:
+		case acp.PlanEntryPriorityHigh:
 			priorityColor = "<font color='red'>[高]</font>"
-		case acpsdk.PlanEntryPriorityMedium:
+		case acp.PlanEntryPriorityMedium:
 			priorityColor = "<font color='orange'>[中]</font>"
 		default:
 			priorityColor = "<font color='grey'>[低]</font>"
@@ -612,7 +611,7 @@ func NewCardActionHandler(verificationToken, encryptKey string, handler func(ctx
 	return larkcard.NewCardActionHandler(verificationToken, encryptKey, handler)
 }
 
-func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, modes *acpsdk.SessionModeState, title *string) string {
+func GroupPinHeaderCard(agent, path string, models []acp.ModelInfo, modes []acp.SessionMode, modelId string, modeId string, title *string) string {
 	var elements []map[string]any
 	if title != nil {
 		elements = append(elements,
@@ -681,10 +680,10 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 	})
 	// Build models info
 	if models != nil {
-		modelsInfo := string(models.CurrentModelId)
-		if len(models.AvailableModels) > 0 {
-			for _, m := range models.AvailableModels {
-				if models.CurrentModelId == m.ModelId {
+		modelsInfo := modelId
+		if len(models) > 0 {
+			for _, m := range models {
+				if modelId == string(m.ModelId) {
 					modelsInfo = string(m.Name)
 					break
 				}
@@ -727,10 +726,10 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 
 	// Build modes info
 	if modes != nil {
-		modesInfo := string(modes.CurrentModeId)
-		if len(modes.AvailableModes) > 0 {
-			for _, m := range modes.AvailableModes {
-				if modes.CurrentModeId == m.Id {
+		modesInfo := modeId
+		if len(modes) > 0 {
+			for _, m := range modes {
+				if modeId == string(m.Id) {
 					modesInfo = string(m.Name)
 				}
 			}
@@ -770,9 +769,9 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 		})
 	}
 
-	if models != nil && len(models.AvailableModels) > 0 {
-		options := make([]map[string]any, len(models.AvailableModels))
-		for i, m := range models.AvailableModels {
+	if len(models) > 0 {
+		options := make([]map[string]any, len(models))
+		for i, m := range models {
 			options[i] = map[string]any{
 				"text": map[string]any{
 					"tag":     "plain_text",
@@ -806,7 +805,7 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 						{
 							"tag":            "select_static",
 							"name":           "model_select",
-							"initial_option": models.CurrentModelId,
+							"initial_option": modelId,
 							"options":        options,
 							"width":          "fill",
 							"behaviors": []map[string]any{
@@ -823,9 +822,9 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 			},
 		})
 	}
-	if modes != nil && len(modes.AvailableModes) > 0 {
-		options := make([]map[string]any, len(modes.AvailableModes))
-		for i, m := range modes.AvailableModes {
+	if len(modes) > 0 {
+		options := make([]map[string]any, len(modes))
+		for i, m := range modes {
 			options[i] = map[string]any{
 				"text": map[string]any{
 					"tag":     "plain_text",
@@ -859,7 +858,7 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 						{
 							"tag":            "select_static",
 							"name":           "mode_select",
-							"initial_option": modes.CurrentModeId,
+							"initial_option": modeId,
 							"options":        options,
 							"width":          "fill",
 							"behaviors": []map[string]any{
@@ -897,9 +896,9 @@ func GroupPinHeaderCard(agent, path string, models *acpsdk.SessionModelState, mo
 func UsageHeaderCard(used, size int) string {
 	var sizeText string
 	if size >= 1000000 {
-		sizeText = fmt.Sprintf("%dM", size / 1000000)
+		sizeText = fmt.Sprintf("%dM", size/1000000)
 	} else if size >= 1000 {
-		sizeText = fmt.Sprintf("%dK", size / 1000)
+		sizeText = fmt.Sprintf("%dK", size/1000)
 	} else {
 		sizeText = fmt.Sprintf("%d", size)
 	}

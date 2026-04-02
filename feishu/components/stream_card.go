@@ -10,7 +10,6 @@ import (
 )
 
 type StreamCard struct {
-	client   *feishu.Client
 	chatId   string
 	cardId   *string
 	sequence int
@@ -25,9 +24,8 @@ type StreamCard struct {
 }
 
 // NewStreamableCard creates a new StreamableCard without sending it immediately
-func NewStreamableCard(ctx context.Context, client *feishu.Client, chatId string, cardType string) *StreamCard {
+func NewStreamableCard(ctx context.Context, chatId string, cardType string) *StreamCard {
 	c := &StreamCard{
-		client:   client,
 		chatId:   chatId,
 		update:   make(chan bool, 1),
 		CardType: cardType,
@@ -98,12 +96,12 @@ func (s *StreamCard) doUpdate(ctx context.Context) {
 	if cardId == nil {
 		// First text received, create and send the card
 		s.sequence = 0
-		newCardId, err := s.client.CreateCard(ctx, streamingCard(s.CardType, text))
+		newCardId, err := feishu.CreateCard(ctx, streamingCard(s.CardType, text))
 		if err != nil {
 			logger.Warn("Failed to create streaming card", "err", err)
 			return
 		}
-		_, err = s.client.SendInteractiveCardById(ctx, s.chatId, newCardId)
+		_, err = feishu.SendInteractiveCardById(ctx, s.chatId, newCardId)
 		if err != nil {
 			logger.Warn("Failed to send streaming card", "err", err)
 			return
@@ -115,7 +113,7 @@ func (s *StreamCard) doUpdate(ctx context.Context) {
 	s.sequence++
 	seq := s.sequence
 	// logger.Debug("update card", "text", text, "seq", seq)
-	err := s.client.UpdateCardElement(ctx, *cardId, "markdown_main", text, seq)
+	err := feishu.UpdateCardElement(ctx, *cardId, "markdown_main", text, seq)
 	if err != nil {
 		logger.Warn("Failed to update streaming card", "err", err)
 	}
@@ -143,7 +141,7 @@ func (s *StreamCard) endStreaming(ctx context.Context) {
 	s.sequence++
 	seq := s.sequence
 	s.mu.Unlock()
-	err := s.client.UpdateCard(ctx, *cardId, streamingCardEndSetting(), seq)
+	err := feishu.UpdateCard(ctx, *cardId, streamingCardEndSetting(), seq)
 	if err != nil {
 		logger.Warn("Failed to end streaming card", "err", err)
 	}

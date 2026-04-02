@@ -2,196 +2,165 @@ package session
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"sync"
 
-	acpsdk "github.com/coder/acp-go-sdk"
+	"github.com/coder/acp-go-sdk"
 	"github.com/ri-char/lark-acp/feishu"
 	"github.com/ri-char/lark-acp/feishu/components"
+	"github.com/ri-char/lark-acp/logger"
 )
 
-// PermissionResponse represents user's response to a permission request
-type PermissionResponse struct {
-	OptionId  acpsdk.PermissionOptionId
-	Cancelled bool
+type Session struct {
+	Mu           sync.Mutex `json:"-"`
+	FeishuChatID string     `json:"feishu_chat_id"`
+	ACPSessionID string     `json:"acp_session_id"`
+	AgentName    string     `json:"agent_name"`
+	Path         string     `json:"path"`
+
+	Title *string `json:"title,omitempty"`
+
+	toolCallIdToInfo   map[string]*components.ToolCallCard
+	toolCallIdToInfoMu sync.Mutex
+
+	PlanMsgId   *string    `json:"plan_msg_id,omitempty"`
+	planMsgIdMu sync.Mutex `json:"-"`
+
+	PinCardMsgId *string    `json:"pin_card_msg_id,omitempty"`
+	pinCardMsgMu sync.Mutex `json:"-"`
+
+	UsageMsgId *string `json:"usage_msg_id,omitempty"`
+	UsageUsed  int     `json:"usage_used,omitempty"`
+	UsageSize  int     `json:"usage_size,omitempty"`
+	usageMsgMu sync.Mutex
+
+	ModelId string            `json:"last_model_id,omitempty"`
+	ModeId  string            `json:"last_mode_id,omitempty"`
+	Models  []acp.ModelInfo   `json:"-"`
+	Modes   []acp.SessionMode `json:"-"`
+	infoMu  sync.RWMutex      `json:"-"`
+
+	streamCard   *components.StreamCard `json:"-"`
+	streamCardMu sync.Mutex             `json:"-"`
 }
 
-// PendingPermission represents a waiting permission request
-type PendingPermission struct {
-	ToolCard *components.ToolCallCard
-	Response  chan PermissionResponse
+func (s *Session) UpdateInformationCardToFeishu(ctx context.Context) {
+	s.infoMu.RLock()
+	s.pinCardMsgMu.Lock()
+	cardContent := feishu.GroupPinHeaderCard(s.AgentName, s.Path, s.Models, s.Modes, s.ModelId, s.ModeId, s.Title)
+	feishu.SendOrUpdatePinCard(ctx, cardContent, s.FeishuChatID, &s.PinCardMsgId)
+	s.pinCardMsgMu.Unlock()
+	s.infoMu.RUnlock()
 }
 
-// PermissionManager manages pending permission requests
-type PermissionManager struct {
-	mu      sync.RWMutex
-	pending map[string]*PendingPermission // requestID -> pending permission
-}
-
-// NewPermissionManager creates a new permission manager
-func NewPermissionManager() *PermissionManager {
-	return &PermissionManager{
-		pending: make(map[string]*PendingPermission),
+func (s *Session) UpdateUsageToFeishu(ctx context.Context, used, size int) {
+	s.usageMsgMu.Lock()
+	oldUsed := s.UsageUsed
+	oldSize := s.UsageSize
+	s.UsageUsed = used
+	s.UsageSize = size
+	if oldUsed != used || oldSize != size {
+		cardContent := feishu.UsageHeaderCard(s.UsageUsed, s.UsageSize)
+		feishu.SendOrUpdateTopNoticeCard(ctx, cardContent, s.FeishuChatID, &s.UsageMsgId)
 	}
+	s.usageMsgMu.Unlock()
 }
 
-// Add adds a pending permission request and returns the response channel
-func (pm *PermissionManager) Add(requestID string, p *PendingPermission) {
-	pm.mu.Lock()
-	pm.pending[requestID] = p
-	pm.mu.Unlock()
-}
+func (s *Session) UpdatePlanToFeishu(ctx context.Context, plan []acp.PlanEntry) {
+	s.planMsgIdMu.Lock()
+	defer s.planMsgIdMu.Unlock()
 
-// Get gets a pending permission request
-func (pm *PermissionManager) Get(requestID string) (*PendingPermission, bool) {
-	pm.mu.RLock()
-	p, ok := pm.pending[requestID]
-	pm.mu.RUnlock()
-	return p, ok
-}
-
-// Remove removes a pending permission request
-func (pm *PermissionManager) Remove(requestID string) {
-	pm.mu.Lock()
-	delete(pm.pending, requestID)
-	pm.mu.Unlock()
-}
-
-func (pm *PermissionManager) GetRequestID() string {
-	var randReqIdBytes [8]byte
-	rand.Read(randReqIdBytes[:])
-	requestID := hex.EncodeToString(randReqIdBytes[:])
-	return requestID
-}
-
-type SessionInfo struct {
-	Mu               sync.Mutex `json:"-"`
-	FeishuChatID     string     `json:"feishu_chat_id"`
-	ACPSessionID     string     `json:"acp_session_id"`
-	AgentName        string     `json:"agent_name"`
-	Path             string     `json:"path"`
-	ToolCallIdToInfo map[string]*components.ToolCallCard
-	PlanMsgId        *string `json:"plan_msg_id,omitempty"`
-	PinCardMsgId     *string `json:"pin_card_msg_id,omitempty"`
-	UsageMsgId       *string `json:"usage_msg_id,omitempty"`
-	Title            *string `json:"title,omitempty"`
-
-	LastModelId string `json:"last_model_id,omitempty"`
-	LastModeId  string `json:"last_mode_id,omitempty"`
-	Models      *acpsdk.SessionModelState
-	Modes       *acpsdk.SessionModeState
-	UsageUsed   int `json:"usage_used,omitempty"`
-	UsageSize   int `json:"usage_size,omitempty"`
-
-	StreamCard *components.StreamCard
-}
-
-func (sessionInfo *SessionInfo) UpdateInformationCard(ctx context.Context, client *feishu.Client) {
-	cardContent := feishu.GroupPinHeaderCard(sessionInfo.AgentName, sessionInfo.Path, sessionInfo.Models, sessionInfo.Modes, sessionInfo.Title)
-	client.SendOrUpdatePinCard(ctx, cardContent, sessionInfo.FeishuChatID, &sessionInfo.PinCardMsgId)
-}
-func (sessionInfo *SessionInfo) UpdateUsage(ctx context.Context, client *feishu.Client) {
-	cardContent := feishu.UsageHeaderCard(sessionInfo.UsageUsed, sessionInfo.UsageSize)
-	client.SendOrUpdateTopNoticeCard(ctx, cardContent, sessionInfo.FeishuChatID, &sessionInfo.UsageMsgId)
-}
-
-type SessionStore struct {
-	mu       sync.RWMutex
-	Sessions map[string]*SessionInfo `json:"sessions"` // feishu_chat_id -> session info
-	filePath string
-}
-
-func NewStore() (*SessionStore, error) {
-	filePath := getSessionPath()
-	store := &SessionStore{
-		Sessions: make(map[string]*SessionInfo),
-		filePath: filePath,
-	}
-
-	// Load existing sessions if file exists
-	data, err := os.ReadFile(filePath)
+	card := feishu.PlanCard(plan)
+	msgIdPtr, err := feishu.SendOrUpdateInteractiveCard(context.Background(), s.FeishuChatID, card, s.PlanMsgId)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return store, nil
-		}
-		return nil, err
+		logger.Debugf("Failed to send plan card to Feishu: %v", err)
 	}
-
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, store); err != nil {
-			return nil, err
-		}
+	if s.PlanMsgId == nil && msgIdPtr != nil {
+		feishu.PinMessage(ctx, *msgIdPtr)
 	}
-	for _, info := range store.Sessions {
-		if info.ToolCallIdToInfo == nil {
-			info.ToolCallIdToInfo = make(map[string]*components.ToolCallCard)
-		}
+	if msgIdPtr != nil {
+		s.PlanMsgId = msgIdPtr
 	}
-
-	return store, nil
 }
 
-func (s *SessionStore) Save() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.saveUnlocked()
-}
+func (s *Session) CloseStreamCard() {
+	s.streamCardMu.Lock()
+	defer s.streamCardMu.Unlock()
 
-func (s *SessionStore) saveUnlocked() error {
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
+	if s.streamCard != nil {
+		s.streamCard.Close()
+		s.streamCard = nil
 	}
+}
 
-	// Ensure directory exists
-	dir := filepath.Dir(s.filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+func (s *Session) AddStreamingChunk(kind string, text string) {
+	s.streamCardMu.Lock()
+	defer s.streamCardMu.Unlock()
+
+	if s.streamCard == nil {
+		s.streamCard = components.NewStreamableCard(context.Background(), s.FeishuChatID, kind)
+	} else if s.streamCard.CardType != kind {
+		go s.streamCard.Close()
+		s.streamCard = components.NewStreamableCard(context.Background(), s.FeishuChatID, kind)
 	}
-
-	return os.WriteFile(s.filePath, data, 0644)
+	s.streamCard.WriteChunk(text)
 }
 
-func (s *SessionStore) Set(chatID string, info *SessionInfo) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.Sessions[chatID] = info
-	return s.saveUnlocked()
+func (s *Session) SetMode(modeId string) {
+	s.infoMu.Lock()
+	s.ModeId = modeId
+	s.infoMu.Unlock()
+	SessionStoreInstance.Save()
+}
+func (s *Session) SetModel(modelId string) {
+	s.infoMu.Lock()
+	s.ModelId = modelId
+	s.infoMu.Unlock()
+	SessionStoreInstance.Save()
 }
 
-func (s *SessionStore) Get(chatID string) (*SessionInfo, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	info, ok := s.Sessions[chatID]
-	return info, ok
+func (s *Session) GetMode() string {
+	s.infoMu.RLock()
+	defer s.infoMu.RUnlock()
+	return s.ModeId
+}
+func (s *Session) GetModel() string {
+	s.infoMu.RLock()
+	defer s.infoMu.RUnlock()
+	return s.ModelId
 }
 
-func (s *SessionStore) GetByACPSession(agentName, acpSessionID string) (*SessionInfo, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, info := range s.Sessions {
-		if info.ACPSessionID == acpSessionID && info.AgentName == agentName {
-			return info, true
-		}
+func (s *Session) SetModes(modes []acp.SessionMode) {
+	s.infoMu.Lock()
+	s.Modes = modes
+	s.infoMu.Unlock()
+}
+
+func (s *Session) SetModels(models []acp.ModelInfo) {
+	s.infoMu.Lock()
+	s.Models = models
+	s.infoMu.Unlock()
+}
+
+func (sessionInfo *Session) GetOrInitToolcall(toolCallId string) *components.ToolCallCard {
+	sessionInfo.toolCallIdToInfoMu.Lock()
+	defer sessionInfo.toolCallIdToInfoMu.Unlock()
+	if sessionInfo.toolCallIdToInfo == nil {
+		sessionInfo.toolCallIdToInfo = make(map[string]*components.ToolCallCard)
 	}
-	return nil, false
-}
-
-func (s *SessionStore) Delete(chatID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.Sessions, chatID)
-	return s.saveUnlocked()
-}
-
-func getSessionPath() string {
-	path, err := os.UserConfigDir()
-	if err != nil {
-		return "session.json"
+	toolCallInfo, ok := sessionInfo.toolCallIdToInfo[toolCallId]
+	if !ok {
+		toolCallInfo = components.NewToolCallCard()
+		sessionInfo.toolCallIdToInfo[toolCallId] = toolCallInfo
 	}
-	return filepath.Join(path, "lark-acp", "session.json")
+	return toolCallInfo
+}
+func (s *Session) GetTitle() *string {
+	s.infoMu.RLock()
+	defer s.infoMu.RUnlock()
+	return s.Title
+}
+func (s *Session) SetTitle(title *string) {
+	s.infoMu.Lock()
+	defer s.infoMu.Unlock()
+	s.Title = title
 }

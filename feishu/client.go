@@ -14,21 +14,16 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
-type Client struct {
-	client    *lark.Client
-}
+var client *lark.Client
 
-func New(appID, appSecret string) *Client {
-	cli := lark.NewClient(appID, appSecret,
+func Init(appID, appSecret string) {
+	client = lark.NewClient(appID, appSecret,
 		lark.WithLogger(logger.NewLarkLogger(slog.LevelInfo)),
 	)
-	return &Client{
-		client:    cli,
-	}
 }
 
 // SendMessage sends a text message to a chat
-func (c *Client) SendMessage(ctx context.Context, chatID, content string) error {
+func SendMessage(ctx context.Context, chatID, content string) error {
 	send_data := map[string]string{
 		"text": content,
 	}
@@ -45,7 +40,7 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string) error 
 		}).
 		Build()
 
-	resp, err := c.client.Im.Message.Create(ctx, req)
+	resp, err := client.Im.Message.Create(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to send message: %w", err)
 	}
@@ -58,7 +53,7 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string) error 
 }
 
 // SendInteractiveCard sends an interactive card message
-func (c *Client) SendInteractiveCard(ctx context.Context, chatID, cardContent string) (*string, error) {
+func SendInteractiveCard(ctx context.Context, chatID, cardContent string) (*string, error) {
 	req := larkim.NewCreateMessageReqBuilder().
 		ReceiveIdType(larkim.ReceiveIdTypeChatId).
 		Body(&larkim.CreateMessageReqBody{
@@ -68,7 +63,7 @@ func (c *Client) SendInteractiveCard(ctx context.Context, chatID, cardContent st
 		}).
 		Build()
 
-	resp, err := c.client.Im.Message.Create(ctx, req)
+	resp, err := client.Im.Message.Create(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send card: %w", err)
 	}
@@ -81,7 +76,7 @@ func (c *Client) SendInteractiveCard(ctx context.Context, chatID, cardContent st
 	}
 	return resp.Data.MessageId, nil
 }
-func (c *Client) UpdateInteractiveCard(ctx context.Context, cardContent, msgId string) error {
+func UpdateInteractiveCard(ctx context.Context, cardContent, msgId string) error {
 	req := larkim.NewPatchMessageReqBuilder().
 		MessageId(msgId).
 		Body(&larkim.PatchMessageReqBody{
@@ -89,7 +84,7 @@ func (c *Client) UpdateInteractiveCard(ctx context.Context, cardContent, msgId s
 		}).
 		Build()
 
-	resp, err := c.client.Im.Message.Patch(ctx, req)
+	resp, err := client.Im.Message.Patch(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to update card: %w", err)
 	}
@@ -100,17 +95,17 @@ func (c *Client) UpdateInteractiveCard(ctx context.Context, cardContent, msgId s
 	return nil
 }
 
-func (c *Client) SendOrUpdateInteractiveCard(ctx context.Context, chatID, cardContent string, msgId *string) (*string, error) {
+func SendOrUpdateInteractiveCard(ctx context.Context, chatID, cardContent string, msgId *string) (*string, error) {
 	if msgId == nil {
-		return c.SendInteractiveCard(ctx, chatID, cardContent)
+		return SendInteractiveCard(ctx, chatID, cardContent)
 	} else {
-		err := c.UpdateInteractiveCard(ctx, cardContent, *msgId)
+		err := UpdateInteractiveCard(ctx, cardContent, *msgId)
 		return msgId, err
 	}
 }
 
-func (c *Client) PutTopNotice(ctx context.Context, chatID, msgId string) error {
-	resp, err := c.client.Im.ChatTopNotice.PutTopNotice(ctx,
+func PutTopNotice(ctx context.Context, chatID, msgId string) error {
+	resp, err := client.Im.ChatTopNotice.PutTopNotice(ctx,
 		larkim.NewPutTopNoticeChatTopNoticeReqBuilder().
 			ChatId(chatID).
 			Body(&larkim.PutTopNoticeChatTopNoticeReqBody{
@@ -132,7 +127,7 @@ func (c *Client) PutTopNotice(ctx context.Context, chatID, msgId string) error {
 }
 
 // CreateGroup creates a new group chat and returns the chat ID
-func (c *Client) CreateGroup(ctx context.Context, name string, userID string) (string, error) {
+func CreateGroup(ctx context.Context, name string, userID string) (string, error) {
 	req := larkim.NewCreateChatReqBuilder().
 		UserIdType(larkim.UserIdTypeOpenId).
 		SetBotManager(true).
@@ -143,7 +138,7 @@ func (c *Client) CreateGroup(ctx context.Context, name string, userID string) (s
 		}).
 		Build()
 
-	resp, err := c.client.Im.Chat.Create(ctx, req)
+	resp, err := client.Im.Chat.Create(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("failed to create group: %w", err)
 	}
@@ -159,25 +154,25 @@ func (c *Client) CreateGroup(ctx context.Context, name string, userID string) (s
 	return *resp.Data.ChatId, nil
 }
 
-func (c *Client) GetGroupShareLink(ctx context.Context, chatID string) (*larkim.LinkChatResp, error) {
+func GetGroupShareLink(ctx context.Context, chatID string) (*larkim.LinkChatResp, error) {
 	req := larkim.NewLinkChatReqBuilder().
 		Body(&larkim.LinkChatReqBody{
 			ValidityPeriod: larkcore.StringPtr("permanently"),
 		}).
 		ChatId(chatID).
 		Build()
-	resp, err := c.client.Im.Chat.Link(ctx, req)
+	resp, err := client.Im.Chat.Link(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get share link for group: %w", err)
 	}
 	return resp, nil
 }
 
-func (c *Client) DeleteGroup(ctx context.Context, chatID string) error {
+func DeleteGroup(ctx context.Context, chatID string) error {
 	req := larkim.NewDeleteChatReqBuilder().
 		ChatId(chatID).
 		Build()
-	resp, err := c.client.Im.Chat.Delete(ctx, req)
+	resp, err := client.Im.Chat.Delete(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
@@ -188,7 +183,7 @@ func (c *Client) DeleteGroup(ctx context.Context, chatID string) error {
 	return nil
 }
 
-func (c *Client) CreateCard(ctx context.Context, cardContent string) (string, error) {
+func CreateCard(ctx context.Context, cardContent string) (string, error) {
 	req := larkcardkit.NewCreateCardReqBuilder().
 		Body(&larkcardkit.CreateCardReqBody{
 			Type: larkcore.StringPtr("card_json"),
@@ -196,7 +191,7 @@ func (c *Client) CreateCard(ctx context.Context, cardContent string) (string, er
 		}).
 		Build()
 
-	resp, err := c.client.Cardkit.V1.Card.Create(ctx, req)
+	resp, err := client.Cardkit.V1.Card.Create(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("failed to create card: %w", err)
 	}
@@ -210,7 +205,7 @@ func (c *Client) CreateCard(ctx context.Context, cardContent string) (string, er
 	return *resp.Data.CardId, nil
 }
 
-func (c *Client) UpdateCardElement(ctx context.Context, cardId string, elementId string, content string, sequence int) error {
+func UpdateCardElement(ctx context.Context, cardId string, elementId string, content string, sequence int) error {
 	req := larkcardkit.NewContentCardElementReqBuilder().
 		CardId(cardId).
 		ElementId(elementId).
@@ -220,7 +215,7 @@ func (c *Client) UpdateCardElement(ctx context.Context, cardId string, elementId
 		}).
 		Build()
 
-	resp, err := c.client.Cardkit.V1.CardElement.Content(ctx, req)
+	resp, err := client.Cardkit.V1.CardElement.Content(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to UpdateCardElement: %w", err)
 	}
@@ -231,7 +226,7 @@ func (c *Client) UpdateCardElement(ctx context.Context, cardId string, elementId
 	return nil
 }
 
-func (c *Client) UpdateCard(ctx context.Context, cardId string, settings string, sequence int) error {
+func UpdateCard(ctx context.Context, cardId string, settings string, sequence int) error {
 	req := larkcardkit.NewSettingsCardReqBuilder().
 		CardId(cardId).
 		Body(&larkcardkit.SettingsCardReqBody{
@@ -240,7 +235,7 @@ func (c *Client) UpdateCard(ctx context.Context, cardId string, settings string,
 		}).
 		Build()
 
-	resp, err := c.client.Cardkit.V1.Card.Settings(ctx, req)
+	resp, err := client.Cardkit.V1.Card.Settings(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to UpdateCard: %w", err)
 	}
@@ -251,7 +246,7 @@ func (c *Client) UpdateCard(ctx context.Context, cardId string, settings string,
 	return nil
 }
 
-func (c *Client) SendInteractiveCardById(ctx context.Context, chatID, cardId string) (*string, error) {
+func SendInteractiveCardById(ctx context.Context, chatID, cardId string) (*string, error) {
 	data := map[string]any{
 		"type": "card",
 		"data": map[string]any{
@@ -262,21 +257,21 @@ func (c *Client) SendInteractiveCardById(ctx context.Context, chatID, cardId str
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal message content: %w", err)
 	}
-	return c.SendInteractiveCard(ctx, chatID, string(contentBytes))
+	return SendInteractiveCard(ctx, chatID, string(contentBytes))
 }
 
 // GetClient returns the underlying lark client
-func (c *Client) GetClient() *lark.Client {
-	return c.client
+func GetClient() *lark.Client {
+	return client
 }
 
-func (c *Client) PinMessage(ctx context.Context, msgId string) error {
+func PinMessage(ctx context.Context, msgId string) error {
 	req := larkim.NewCreatePinReqBuilder().
 		Body(larkim.NewCreatePinReqBodyBuilder().
 			MessageId(msgId).
 			Build()).
 		Build()
-	resp, err := c.client.Im.Pin.Create(ctx, req)
+	resp, err := client.Im.Pin.Create(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to pin message: %w", err)
 	}
@@ -287,20 +282,20 @@ func (c *Client) PinMessage(ctx context.Context, msgId string) error {
 	return nil
 }
 
-func (c *Client) SendOrUpdatePinCard(ctx context.Context, cardContent, chatId string, cardId **string) {
+func SendOrUpdatePinCard(ctx context.Context, cardContent, chatId string, cardId **string) {
 	if *cardId != nil {
-		if err := c.UpdateInteractiveCard(ctx, cardContent, **cardId); err != nil {
+		if err := UpdateInteractiveCard(ctx, cardContent, **cardId); err != nil {
 			logger.Warnf("Failed to update pin card: %v", err)
 		}
 	} else {
-		msgID, err := c.SendInteractiveCard(ctx, chatId, cardContent)
+		msgID, err := SendInteractiveCard(ctx, chatId, cardContent)
 		if err != nil {
 			logger.Warnf("Failed to send pin card: %v", err)
 			return
 		}
 		*cardId = msgID
 		if msgID != nil {
-			err := c.PinMessage(ctx, *msgID)
+			err := PinMessage(ctx, *msgID)
 			if err != nil {
 				logger.Warnf("Failed to pin message: %v", err)
 			}
@@ -308,20 +303,20 @@ func (c *Client) SendOrUpdatePinCard(ctx context.Context, cardContent, chatId st
 	}
 }
 
-func (c *Client) SendOrUpdateTopNoticeCard(ctx context.Context, cardContent, chatId string, cardId **string) {
+func SendOrUpdateTopNoticeCard(ctx context.Context, cardContent, chatId string, cardId **string) {
 	if *cardId != nil {
-		if err := c.UpdateInteractiveCard(ctx, cardContent, **cardId); err != nil {
+		if err := UpdateInteractiveCard(ctx, cardContent, **cardId); err != nil {
 			logger.Warnf("Failed to update pin card: %v", err)
 		}
 	} else {
-		msgID, err := c.SendInteractiveCard(ctx, chatId, cardContent)
+		msgID, err := SendInteractiveCard(ctx, chatId, cardContent)
 		if err != nil {
 			logger.Warnf("Failed to send pin card: %v", err)
 			return
 		}
 		*cardId = msgID
 		if msgID != nil {
-			err := c.PutTopNotice(ctx, chatId,*msgID)
+			err := PutTopNotice(ctx, chatId, *msgID)
 			if err != nil {
 				logger.Warnf("Failed to pin message: %v", err)
 			}
@@ -331,17 +326,17 @@ func (c *Client) SendOrUpdateTopNoticeCard(ctx context.Context, cardContent, cha
 }
 
 // SendPrivateMessage sends a private message to a user
-func (c *Client) SendPrivateMessage(ctx context.Context, openID, content, msgType string) error {
+func SendPrivateMessage(ctx context.Context, openID, content, msgType string) error {
 	req := larkim.NewCreateMessageReqBuilder().
 		ReceiveIdType(larkim.ReceiveIdTypeOpenId).
 		Body(&larkim.CreateMessageReqBody{
-			ReceiveId:   larkcore.StringPtr(openID),
-			MsgType:     larkcore.StringPtr(msgType),
-			Content:     larkcore.StringPtr(content),
+			ReceiveId: larkcore.StringPtr(openID),
+			MsgType:   larkcore.StringPtr(msgType),
+			Content:   larkcore.StringPtr(content),
 		}).
 		Build()
 
-	resp, err := c.client.Im.Message.Create(ctx, req)
+	resp, err := client.Im.Message.Create(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to send private message: %w", err)
 	}
@@ -354,6 +349,6 @@ func (c *Client) SendPrivateMessage(ctx context.Context, openID, content, msgTyp
 }
 
 // SendInteractiveCardToUser sends an interactive card to a user's private chat
-func (c *Client) SendInteractiveCardToUser(ctx context.Context, openID, cardContent string) error {
-	return c.SendPrivateMessage(ctx, openID, cardContent, "interactive")
+func SendInteractiveCardToUser(ctx context.Context, openID, cardContent string) error {
+	return SendPrivateMessage(ctx, openID, cardContent, "interactive")
 }
