@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"sync"
 
 	"github.com/coder/acp-go-sdk"
@@ -41,6 +43,8 @@ type Session struct {
 
 	streamCard   *components.StreamCard `json:"-"`
 	streamCardMu sync.Mutex             `json:"-"`
+
+	UserMsg feishu.UserMsgBuffer
 }
 
 func (s *Session) UpdateInformationCardToFeishu(ctx context.Context) {
@@ -95,7 +99,10 @@ func (s *Session) CloseStreamCard() {
 func (s *Session) AddStreamingChunk(kind string, text string) {
 	s.streamCardMu.Lock()
 	defer s.streamCardMu.Unlock()
+	s.addStreamingChunkLocked(kind, text)
+}
 
+func (s *Session) addStreamingChunkLocked(kind string, text string) {
 	if s.streamCard == nil {
 		s.streamCard = components.NewStreamableCard(context.Background(), s.FeishuChatID, kind)
 	} else if s.streamCard.CardType != kind {
@@ -105,6 +112,17 @@ func (s *Session) AddStreamingChunk(kind string, text string) {
 	s.streamCard.WriteChunk(text)
 }
 
+func (s *Session) AddStreamingChunkImage(kind string, image io.Reader, ctx context.Context) {
+	s.streamCardMu.Lock()
+	defer s.streamCardMu.Unlock()
+	imageKey, err := feishu.UploadImage(ctx, image)
+	if err != nil {
+		logger.Warn("upload image to feishu failed", "err", err)
+		s.addStreamingChunkLocked(kind, "[图片上传失败]")
+		return
+	}
+	s.addStreamingChunkLocked(kind, fmt.Sprintf(" ![image](%s) ", imageKey))
+}
 func (s *Session) SetMode(modeId string) {
 	s.infoMu.Lock()
 	s.ModeId = modeId

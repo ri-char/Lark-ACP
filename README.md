@@ -15,6 +15,7 @@
 - 支持思考、工具调用的卡片展示
 - 支持切换会话模型、模式
 - 流式传输
+- 支持图片发送及接收
 
 ## 配置
 
@@ -26,6 +27,9 @@
 ```toml
 feishu_app_id = "cli_xxxxxxxxxxxxxxxx"
 feishu_app_secret = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# 没有配置就可以省略
+feishu_verification_token = ""
+feishu_event_encrypt_key = ""
 
 [[agent]]
 id = "opencode"
@@ -75,6 +79,7 @@ cmd = ["codex-acp"]
 {
   "scopes": {
     "tenant": [
+      "im:resource",
       "cardkit:card:write",
       "im:chat",
       "im:chat:create",

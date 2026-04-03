@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 
 	"github.com/ri-char/lark-acp/logger"
@@ -351,4 +352,65 @@ func SendPrivateMessage(ctx context.Context, openID, content, msgType string) er
 // SendInteractiveCardToUser sends an interactive card to a user's private chat
 func SendInteractiveCardToUser(ctx context.Context, openID, cardContent string) error {
 	return SendPrivateMessage(ctx, openID, cardContent, "interactive")
+}
+
+func GetMessage(ctx context.Context, msgId string) (*larkim.Message, error) {
+	req := larkim.NewGetMessageReqBuilder().
+		MessageId(msgId).
+		Build()
+
+	resp, err := client.Im.Message.Get(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get message: %w", err)
+	}
+
+	if !resp.Success() {
+		return nil, fmt.Errorf("failed to get message: code=%d, msg=%s", resp.Code, resp.Msg)
+	}
+	if len(resp.Data.Items) == 0 {
+		return nil, fmt.Errorf("failed to get message: item is empty")
+	}
+	msg := resp.Data.Items[0]
+	return msg, nil
+}
+
+func GetImageInMessage(ctx context.Context, imageKey string, msgId string) (io.Reader, string, error) {
+	req := larkim.NewGetMessageResourceReqBuilder().
+		FileKey(imageKey).
+		MessageId(msgId).
+		Type("image").
+		Build()
+
+	resp, err := client.Im.MessageResource.Get(ctx, req)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get image: %w", err)
+	}
+	contentType := resp.Header.Get("Content-Type")
+
+	if !resp.Success() {
+		return nil, "", fmt.Errorf("failed to get image: code=%d, msg=%s", resp.Code, resp.Msg)
+	}
+
+	return resp.File, contentType, nil
+}
+func UploadImage(ctx context.Context, data io.Reader) (string, error) {
+	req := larkim.NewCreateImageReqBuilder().
+		Body(larkim.NewCreateImageReqBodyBuilder().
+			ImageType(`message`).
+			Image(data).
+			Build()).
+		Build()
+
+	// 发起请求
+	resp, err := client.Im.V1.Image.Create(context.Background(), req)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload image: %w", err)
+	}
+	if !resp.Success() {
+		return "", fmt.Errorf("failed to upload image: code=%d, msg=%s", resp.Code, resp.Msg)
+	}
+	if resp.Data.ImageKey == nil {
+		return "", fmt.Errorf("failed to upload image")
+	}
+	return *resp.Data.ImageKey, nil
 }

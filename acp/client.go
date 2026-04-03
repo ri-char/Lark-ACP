@@ -1,7 +1,9 @@
 package acp
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log/slog"
@@ -29,6 +31,7 @@ type Client struct {
 	terminals    *TerminalManager
 	Capabilities []string
 	closed       bool
+	PromptImage  bool
 }
 
 // New creates a new ACP client by launching the agent command
@@ -95,6 +98,8 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if resp.AgentCapabilities.SessionCapabilities.List != nil {
 		c.Capabilities = append(c.Capabilities, "list_session")
 	}
+	c.PromptImage = resp.AgentCapabilities.PromptCapabilities.Image
+	logger.Debug("New Agent", "name", resp.AgentInfo.Name, "PromptImage", c.PromptImage)
 	return err
 }
 
@@ -149,10 +154,10 @@ func (c *Client) SetMode(ctx context.Context, sessionID, modeId string) error {
 }
 
 // SendMessage sends a prompt to the ACP session
-func (c *Client) SendMessage(ctx context.Context, sessionID, content string) error {
+func (c *Client) SendMessage(ctx context.Context, sessionID string, content []acpsdk.ContentBlock) error {
 	_, err := c.conn.Prompt(ctx, acpsdk.PromptRequest{
 		SessionId: acpsdk.SessionId(sessionID),
-		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(content)},
+		Prompt:    content,
 	})
 	return err
 }
@@ -350,6 +355,13 @@ func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification
 			content := u.AgentMessageChunk.Content.Text.Text
 			session.AddStreamingChunk("message", content)
 		}
+		if u.AgentMessageChunk.Content.Image != nil {
+			content := u.AgentMessageChunk.Content.Image
+			logger.Debug("AgentMessageChunk Images")
+			buffer := bytes.NewBufferString(content.Data)
+			reader := base64.NewDecoder(base64.StdEncoding, buffer)
+			session.AddStreamingChunkImage("message", reader, ctx)
+		}
 	case u.ToolCall != nil || u.ToolCallUpdate != nil:
 		logger.Debug("SessionUpdate from acp", "type", "ToolCall/ToolCallUpdate")
 		session.CloseStreamCard()
@@ -359,6 +371,12 @@ func (c *Client) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification
 		if u.AgentThoughtChunk.Content.Text != nil {
 			content := u.AgentThoughtChunk.Content.Text.Text
 			session.AddStreamingChunk("thought", content)
+		}
+		if u.AgentThoughtChunk.Content.Image != nil {
+			content := u.AgentThoughtChunk.Content.Image
+			buffer := bytes.NewBufferString(content.Data)
+			reader := base64.NewDecoder(base64.StdEncoding, buffer)
+			session.AddStreamingChunkImage("thought", reader, ctx)
 		}
 	case u.Plan != nil:
 		logger.Debug("SessionUpdate from acp", "type", "Plan")

@@ -14,9 +14,11 @@ type AgentConfig struct {
 }
 
 type Config struct {
-	FeishuAppID     string        `toml:"feishu_app_id"`
-	FeishuAppSecret string        `toml:"feishu_app_secret"`
-	Agents          []AgentConfig `toml:"agent"`
+	FeishuAppID             string        `toml:"feishu_app_id"`
+	FeishuAppSecret         string        `toml:"feishu_app_secret"`
+	FeishuVerificationToken string        `toml:"feishu_verification_token"`
+	FeishuEventEncryptKey   string        `toml:"feishu_event_encrypt_key"`
+	Agents                  []AgentConfig `toml:"agent"`
 }
 
 func Load() (*Config, error) {
@@ -26,7 +28,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	decoder := toml.NewDecoder(file).DisallowUnknownFields()
-	
+
 	var output Config
 	err = decoder.Decode(&output)
 	if err != nil {
@@ -37,7 +39,7 @@ func Load() (*Config, error) {
 }
 
 func getConfigPath() string {
-	path, err:=os.UserConfigDir()
+	path, err := os.UserConfigDir()
 	if err != nil {
 		return "config.toml"
 	}
